@@ -46,8 +46,9 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       let storedCredId: string;
 
       if (credentialId) {
-        // Use existing credential
-        derivedKey = await this.deriveKeyFromCredential(credentialId);
+        // Use existing credential - derive key directly without authentication
+        // (Authentication is only required for decryption)
+        derivedKey = createHash('sha256').update(credentialId).digest();
         storedCredId = credentialId;
       } else {
         // Create new credential
@@ -120,6 +121,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
     return new Promise((resolve, reject) => {
       const port = 8765;
       let server: any;
+      const connections = new Set<any>();
+      let timeoutId: NodeJS.Timeout;
       
       // Generate registration options
       const registrationOptions = this.f2l.attestationOptions();
@@ -133,6 +136,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VHSM - FIDO2 Registration</title>
   <style>
     body { 
@@ -257,20 +262,38 @@ export class FIDO2Provider implements KeyDecryptionProvider {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true }));
                 
-                // Close server and resolve
-                server.close();
-                resolve({ key, credentialId });
+                // Clear the timeout since we succeeded
+                clearTimeout(timeoutId);
+                
+                // Close server and all connections
+                // Small delay to ensure response is sent before destroying connections
+                setTimeout(() => {
+                  connections.forEach(conn => conn.destroy());
+                  server.close(() => {
+                    resolve({ key, credentialId });
+                  });
+                }, 100);
               } catch (error) {
                 res.writeHead(400);
                 res.end();
-                server.close();
-                reject(error);
+                setTimeout(() => {
+                  connections.forEach(conn => conn.destroy());
+                  server.close(() => {
+                    reject(error);
+                  });
+                }, 100);
               }
             });
           } else {
             res.writeHead(404);
             res.end();
           }
+        });
+
+        // Track connections for cleanup
+        server.on('connection', (conn: any) => {
+          connections.add(conn);
+          conn.on('close', () => connections.delete(conn));
         });
 
         server.listen(port, () => {
@@ -289,9 +312,11 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
 
         // Timeout after 2 minutes
-        setTimeout(() => {
-          server.close();
-          reject(new Error('Registration timeout - no response received'));
+        timeoutId = setTimeout(() => {
+          connections.forEach(conn => conn.destroy());
+          server.close(() => {
+            reject(new Error('Registration timeout - no response received'));
+          });
         }, 120000);
       }).catch(reject);
     });
@@ -305,6 +330,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
     return new Promise((resolve, reject) => {
       const port = 8765;
       let server: any;
+      const connections = new Set<any>();
+      let timeoutId: NodeJS.Timeout;
       
       // Generate authentication options
       const authOptions = this.f2l.assertionOptions();
@@ -317,6 +344,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VHSM - FIDO2 Authentication</title>
   <style>
     body { 
@@ -437,20 +466,38 @@ export class FIDO2Provider implements KeyDecryptionProvider {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true }));
                 
-                // Close server and resolve
-                server.close();
-                resolve(key);
+                // Clear the timeout since we succeeded
+                clearTimeout(timeoutId);
+                
+                // Close server and all connections
+                // Small delay to ensure response is sent before destroying connections
+                setTimeout(() => {
+                  connections.forEach(conn => conn.destroy());
+                  server.close(() => {
+                    resolve(key);
+                  });
+                }, 100);
               } catch (error) {
                 res.writeHead(400);
                 res.end();
-                server.close();
-                reject(error);
+                setTimeout(() => {
+                  connections.forEach(conn => conn.destroy());
+                  server.close(() => {
+                    reject(error);
+                  });
+                }, 100);
               }
             });
           } else {
             res.writeHead(404);
             res.end();
           }
+        });
+
+        // Track connections for cleanup
+        server.on('connection', (conn: any) => {
+          connections.add(conn);
+          conn.on('close', () => connections.delete(conn));
         });
 
         server.listen(port, () => {
@@ -469,9 +516,11 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
 
         // Timeout after 2 minutes
-        setTimeout(() => {
-          server.close();
-          reject(new Error('Authentication timeout - no response received'));
+        timeoutId = setTimeout(() => {
+          connections.forEach(conn => conn.destroy());
+          server.close(() => {
+            reject(new Error('Authentication timeout - no response received'));
+          });
         }, 120000);
       }).catch(reject);
     });

@@ -68,6 +68,7 @@ program
         key: options.key,
         excludeKey: options.excludeKey,
       });
+      process.exit(0);
     } catch (error) {
       const sanitized = sanitizeError(error);
       console.error(`Error: ${sanitized.message}`);
@@ -718,13 +719,30 @@ async function encryptKey(
     const { encryptKeyWithFIDO2 } = await import('./providers/fido2.js');
     
     console.log('Encrypting keys with FIDO2/Yubikey...');
-    console.log('You will need to touch your Yubikey to complete this operation.\n');
+    console.log(`Found ${keyValues.length} key(s) to encrypt.`);
+    console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
+    
+    // Encrypt first key to create the credential
+    let credentialId: string | undefined;
     
     for (const [i, key] of keyValues.entries()) {
-      const encrypted = await encryptKeyWithFIDO2(key);
-      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
-      outputContent += `\n${encapsulatedKey}`;
+      if (i === 0) {
+        console.log(`Encrypting key ${i + 1}/${keyValues.length}: ${keyKeys[i]} (creating credential)...`);
+        const encrypted = await encryptKeyWithFIDO2(key);
+        // Extract credential ID from first encrypted key (format: credId:iv:authTag:data)
+        credentialId = encrypted.split(':')[0];
+        const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
+        outputContent += `\n${encapsulatedKey}`;
+      } else {
+        console.log(`Encrypting key ${i + 1}/${keyValues.length}: ${keyKeys[i]} (reusing credential)...`);
+        // Reuse the credential for remaining keys
+        const encrypted = await encryptKeyWithFIDO2(key, credentialId);
+        const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
+        outputContent += `\n${encapsulatedKey}`;
+      }
     }
+    
+    console.log(`\n✅ All ${keyValues.length} key(s) encrypted with the same FIDO2 credential.`);
   } else if (providerName === 'password') {
     // Password-based encryption
     const { encryptKeyWithPassword } = await import('./providers/password.js');
