@@ -8,6 +8,7 @@ export { getProvider, registerProvider, listProviders, getDefaultProvider } from
 export { PasswordProvider, encryptKeyWithPassword } from './providers/password.js';
 export { DPAPIProvider, encryptKeyWithDPAPI, isDPAPIAvailable } from './providers/dpapi.js';
 export { FIDO2Provider, encryptKeyWithFIDO2, isFIDO2Available } from './providers/fido2.js';
+export { TPM2Provider, encryptKeyWithTPM2, isTPM2Available } from './providers/tpm2.js';
 export { SessionCache } from './cache.js';
 export { createKeyId, sanitizeError, clearString } from './security.js';
 export { loadConfig } from './config.js';
