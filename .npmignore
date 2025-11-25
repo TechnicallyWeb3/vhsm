@@ -1,13 +1,50 @@
+# Source files (only dist/ is needed in published package)
 src/
-*.ts
-!*.d.ts
 tsconfig.json
-.gitignore
+tsconfig.*.json
+.tsbuildinfo
+
+# Tests
+test/
+test-app/
+test-*.js
+*.test.js
+*.spec.js
+
+# Development files
 .vscode/
-.idea/
-*.log
+.github/
+.cursor/
+.git/
+.gitignore
+
+# Environment files
 .env*
 !.env.example
-EXAMPLE.md
-node_modules/
+*.env.keys*
+*.encrypted
 
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Build artifacts
+*.tgz
+dist/**/*.map
+
+# Documentation that doesn't need to be in npm package
+PUBLISHING.md
+EXAMPLE.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+*.swp
+*.swo
+*~
+.idea/

@@ -4,9 +4,17 @@
   "description": "Virtual HSM - Secure dotenvx wrapper with pluggable key decryption",
   "type": "module",
   "bin": {
-    "vhsm": "./dist/cli.js"
+    "vhsm": "dist/cli.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "FIDO2-GUIDE.md",
+    "FIDO2-QUICKSTART.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -19,10 +27,24 @@
     "hsm",
     "key-management",
     "encryption",
-    "cli"
+    "cli",
+    "fido2",
+    "yubikey",
+    "dpapi",
+    "environment-variables",
+    "secrets-management",
+    "hardware-security"
   ],
-  "author": "",
+  "author": "TechnicallyWeb3",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TechnicallyWeb3/vhsm.git"
+  },
+  "homepage": "https://github.com/TechnicallyWeb3/vhsm#readme",
+  "bugs": {
+    "url": "https://github.com/TechnicallyWeb3/vhsm/issues"
+  },
   "dependencies": {
     "commander": "^11.1.0",
     "fido2-lib": "^3.5.5",
