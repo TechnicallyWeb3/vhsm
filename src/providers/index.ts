@@ -3,6 +3,7 @@ import type { KeyDecryptionProvider } from '../types.js';
 import { PasswordProvider } from './password.js';
 import { DPAPIProvider } from './dpapi.js';
 import { TPM2Provider, isTPM2Available } from './tpm2.js';
+import { FIDO2Provider, isFIDO2Available } from './fido2.js';
 
 /**
  * Registry of available key decryption providers
@@ -29,6 +30,15 @@ if (isTPM2Available()) {
   } catch (error) {
     // TPM2 provider will throw if tpm2-tools are not available
     console.warn('TPM2 tools detected but provider failed to initialize:', error instanceof Error ? error.message : 'Unknown error');
+  }
+}
+
+// Register FIDO2 provider if available
+if (isFIDO2Available()) {
+  try {
+    providers.set('fido2', new FIDO2Provider());
+  } catch (error) {
+    console.warn('FIDO2 provider failed to initialize:', error instanceof Error ? error.message : 'Unknown error');
   }
 }
 

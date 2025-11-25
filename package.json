@@ -25,6 +25,7 @@
   "license": "MIT",
   "dependencies": {
     "commander": "^11.1.0",
+    "fido2-lib": "^3.5.5",
     "inquirer": "^9.2.12"
   },
   "devDependencies": {

@@ -50,7 +50,7 @@ program
   .command('encrypt')
   .description('Encrypt a dotenvx private key')
   .option('-o, --output <path>', 'Output path for encrypted key', '.env.keys.encrypted')
-  .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi)', 'password')
+  .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi, fido2)', 'password')
   .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing, password provider only)')
   .option('-nd, --no-delete', 'Do not delete the original .env.keys file after encryption')
   // Pass-through options for dotenvx encrypt
@@ -131,7 +131,7 @@ function loadEncryptedKeyFile(keyPath: string): string {
 
 /**
  * Parse all VHSM_PRIVATE_KEY* entries from encrypted file
- * Supports both "encrypted:" (password) and "dpapi:" prefixes
+ * Supports "encrypted:" (password), "dpapi:", and "fido2:" prefixes
  */
 function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encryptedValue: string; provider: string }> {
   const keys: Array<{ vhsmKey: string; encryptedValue: string; provider: string }> = [];
@@ -143,12 +143,14 @@ function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encrypted
       continue;
     }
     
-    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi):...
-    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi):(.*)/.exec(trimmed);
+    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi|fido2):...
+    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi|fido2):(.*)/.exec(trimmed);
     if (match) {
+      const providerPrefix = match[2];
       keys.push({
         vhsmKey: match[1],
-        provider: match[2] === 'dpapi' ? 'dpapi' : 'password',
+        provider: providerPrefix === 'dpapi' ? 'dpapi' : 
+                  providerPrefix === 'fido2' ? 'fido2' : 'password',
         encryptedValue: match[3],
       });
     }
@@ -709,6 +711,18 @@ async function encryptKey(
     for (const [i, key] of keyValues.entries()) {
       const encrypted = encryptKeyWithDPAPI(key);
       const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=dpapi:${encrypted}`;
+      outputContent += `\n${encapsulatedKey}`;
+    }
+  } else if (providerName === 'fido2') {
+    // FIDO2 encryption - requires Yubikey/FIDO2 device
+    const { encryptKeyWithFIDO2 } = await import('./providers/fido2.js');
+    
+    console.log('Encrypting keys with FIDO2/Yubikey...');
+    console.log('You will need to touch your Yubikey to complete this operation.\n');
+    
+    for (const [i, key] of keyValues.entries()) {
+      const encrypted = await encryptKeyWithFIDO2(key);
+      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
       outputContent += `\n${encapsulatedKey}`;
     }
   } else if (providerName === 'password') {
