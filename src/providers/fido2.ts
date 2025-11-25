@@ -138,52 +138,159 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VHSM - FIDO2 Registration</title>
+  <title>vHSM - FIDO2 Registration</title>
   <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
     body { 
-      font-family: system-ui, -apple-system, sans-serif; 
-      max-width: 600px; 
-      margin: 50px auto; 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+      width: 100%;
+      padding: 40px;
       text-align: center;
     }
-    .status { 
-      padding: 20px; 
-      border-radius: 8px; 
-      margin: 20px 0;
-      background: #f0f0f0;
+    .header {
+      margin-bottom: 30px;
     }
-    .success { background: #d4edda; color: #155724; }
-    .error { background: #f8d7da; color: #721c24; }
+    .logo {
+      font-size: 64px;
+      margin-bottom: 10px;
+      display: block;
+    }
+    h1 {
+      color: #2d3748;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #718096;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .version {
+      display: inline-block;
+      background: #edf2f7;
+      color: #4a5568;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+    .status { 
+      padding: 20px;
+      border-radius: 12px;
+      margin: 30px 0;
+      background: #f7fafc;
+      border: 2px solid #e2e8f0;
+      transition: all 0.3s ease;
+    }
+    .status p {
+      color: #4a5568;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .success { 
+      background: #f0fff4; 
+      border-color: #9ae6b4;
+    }
+    .success p { color: #22543d; }
+    .error { 
+      background: #fff5f5; 
+      border-color: #fc8181;
+    }
+    .error p { color: #742a2a; }
     button {
-      background: #007bff;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       border: none;
-      padding: 12px 24px;
+      padding: 16px 32px;
       font-size: 16px;
-      border-radius: 6px;
+      font-weight: 600;
+      border-radius: 12px;
       cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      width: 100%;
     }
-    button:hover { background: #0056b3; }
-    button:disabled { background: #6c757d; cursor: not-allowed; }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    button:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .yubikey-icon {
+      font-size: 48px;
+      margin: 20px 0;
+      display: block;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .footer {
+      margin-top: 30px;
+      color: #a0aec0;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <h1>🔐 VHSM FIDO2 Setup</h1>
-  <div class="status">
-    <p id="status">Click the button below and touch your Yubikey when it blinks.</p>
+  <div class="container">
+    <div class="header">
+      <span class="logo">🔐</span>
+      <h1>FIDO2 Registration</h1>
+      <p class="subtitle">vHSM - Virtual Hardware Security Module</p>
+      <span class="version">v0.1.0</span>
+    </div>
+    
+    <div class="status">
+      <p id="status">Click the button below and touch your Yubikey when it blinks.</p>
+    </div>
+    
+    <span id="yubikey-icon" class="yubikey-icon" style="display:none;">🔑</span>
+    
+    <button id="registerBtn" onclick="register()">Register Yubikey</button>
+    
+    <div class="footer">
+      Secured by FIDO2 WebAuthn
+    </div>
   </div>
-  <button id="registerBtn" onclick="register()">Register Yubikey</button>
   
   <script>
     async function register() {
       const btn = document.getElementById('registerBtn');
       const status = document.getElementById('status');
+      const icon = document.getElementById('yubikey-icon');
       
       try {
         btn.disabled = true;
         status.parentElement.className = 'status';
         status.textContent = '👆 Touch your Yubikey now...';
+        icon.style.display = 'block';
         
         // Create credential
         const credential = await navigator.credentials.create({
@@ -221,6 +328,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
         
         if (response.ok) {
+          icon.style.display = 'none';
           status.parentElement.className = 'status success';
           status.textContent = '✅ Success! You can close this window.';
           setTimeout(() => window.close(), 2000);
@@ -228,6 +336,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
           throw new Error('Server rejected credential');
         }
       } catch (error) {
+        icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
         btn.disabled = false;
@@ -346,52 +455,159 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VHSM - FIDO2 Authentication</title>
+  <title>vHSM - FIDO2 Authentication</title>
   <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
     body { 
-      font-family: system-ui, -apple-system, sans-serif; 
-      max-width: 600px; 
-      margin: 50px auto; 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+      width: 100%;
+      padding: 40px;
       text-align: center;
     }
-    .status { 
-      padding: 20px; 
-      border-radius: 8px; 
-      margin: 20px 0;
-      background: #f0f0f0;
+    .header {
+      margin-bottom: 30px;
     }
-    .success { background: #d4edda; color: #155724; }
-    .error { background: #f8d7da; color: #721c24; }
+    .logo {
+      font-size: 64px;
+      margin-bottom: 10px;
+      display: block;
+    }
+    h1 {
+      color: #2d3748;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #718096;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .version {
+      display: inline-block;
+      background: #edf2f7;
+      color: #4a5568;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+    .status { 
+      padding: 20px;
+      border-radius: 12px;
+      margin: 30px 0;
+      background: #f7fafc;
+      border: 2px solid #e2e8f0;
+      transition: all 0.3s ease;
+    }
+    .status p {
+      color: #4a5568;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .success { 
+      background: #f0fff4; 
+      border-color: #9ae6b4;
+    }
+    .success p { color: #22543d; }
+    .error { 
+      background: #fff5f5; 
+      border-color: #fc8181;
+    }
+    .error p { color: #742a2a; }
     button {
-      background: #007bff;
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
       color: white;
       border: none;
-      padding: 12px 24px;
+      padding: 16px 32px;
       font-size: 16px;
-      border-radius: 6px;
+      font-weight: 600;
+      border-radius: 12px;
       cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+      width: 100%;
     }
-    button:hover { background: #0056b3; }
-    button:disabled { background: #6c757d; cursor: not-allowed; }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    button:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .yubikey-icon {
+      font-size: 48px;
+      margin: 20px 0;
+      display: block;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .footer {
+      margin-top: 30px;
+      color: #a0aec0;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <h1>🔓 VHSM FIDO2 Unlock</h1>
-  <div class="status">
-    <p id="status">Click the button below and touch your Yubikey when it blinks.</p>
+  <div class="container">
+    <div class="header">
+      <span class="logo">🔓</span>
+      <h1>FIDO2 Authentication</h1>
+      <p class="subtitle">vHSM - Virtual Hardware Security Module</p>
+      <span class="version">v0.1.0</span>
+    </div>
+    
+    <div class="status">
+      <p id="status">Click the button below and touch your Yubikey when it blinks.</p>
+    </div>
+    
+    <span id="yubikey-icon" class="yubikey-icon" style="display:none;">🔑</span>
+    
+    <button id="authBtn" onclick="authenticate()">Unlock with Yubikey</button>
+    
+    <div class="footer">
+      Secured by FIDO2 WebAuthn
+    </div>
   </div>
-  <button id="authBtn" onclick="authenticate()">Unlock with Yubikey</button>
   
   <script>
     async function authenticate() {
       const btn = document.getElementById('authBtn');
       const status = document.getElementById('status');
+      const icon = document.getElementById('yubikey-icon');
       
       try {
         btn.disabled = true;
         status.parentElement.className = 'status';
         status.textContent = '👆 Touch your Yubikey now...';
+        icon.style.display = 'block';
         
         // Authenticate with credential
         const assertion = await navigator.credentials.get({
@@ -422,6 +638,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
         
         if (response.ok) {
+          icon.style.display = 'none';
           status.parentElement.className = 'status success';
           status.textContent = '✅ Success! You can close this window.';
           setTimeout(() => window.close(), 2000);
@@ -429,6 +646,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
           throw new Error('Authentication failed');
         }
       } catch (error) {
+        icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
         btn.disabled = false;
