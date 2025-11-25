@@ -12,6 +12,7 @@ import { loadConfig } from './config.js';
 import type { VhsmConfig } from './types.js';
 
 const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { name?: string; version?: string; description?: string };
 const resolvedDotenvxBin = resolveDotenvxBin();
 let warnedAboutGlobalDotenvx = false;
 
@@ -52,9 +53,9 @@ function spawnDotenvx(args: string[], options: Parameters<typeof spawn>[2]) {
 }
 
 program
-  .name('vhsm')
-  .description('Virtual HSM - Secure dotenvx wrapper with pluggable key decryption')
-  .version('0.1.0');
+  .name(pkg.name || 'vhsm')
+  .description(pkg.description || 'Virtual HSM - Secure dotenvx wrapper with pluggable key decryption')
+  .version(pkg.version || '0.0.0');
 
 program
   .command('run')
