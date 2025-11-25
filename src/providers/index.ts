@@ -1,5 +1,8 @@
+import { platform } from 'node:os';
 import type { KeyDecryptionProvider } from '../types.js';
 import { PasswordProvider } from './password.js';
+import { DPAPIProvider } from './dpapi.js';
+import { TPM2Provider, isTPM2Available } from './tpm2.js';
 
 /**
  * Registry of available key decryption providers
@@ -8,6 +11,26 @@ const providers = new Map<string, KeyDecryptionProvider>();
 
 // Register default provider
 providers.set('password', new PasswordProvider());
+
+// Register DPAPI provider on Windows
+if (platform() === 'win32') {
+  try {
+    providers.set('dpapi', new DPAPIProvider());
+  } catch (error) {
+    // DPAPI provider will throw if not on Windows, which is expected
+    // This is a safety check in case the platform check fails
+  }
+}
+
+// Register TPM2 provider if available
+if (isTPM2Available()) {
+  try {
+    providers.set('tpm2', new TPM2Provider());
+  } catch (error) {
+    // TPM2 provider will throw if tpm2-tools are not available
+    console.warn('TPM2 tools detected but provider failed to initialize:', error instanceof Error ? error.message : 'Unknown error');
+  }
+}
 
 /**
  * Get a provider by name

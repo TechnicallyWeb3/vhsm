@@ -6,6 +6,7 @@
 
 export { getProvider, registerProvider, listProviders, getDefaultProvider } from './providers/index.js';
 export { PasswordProvider, encryptKeyWithPassword } from './providers/password.js';
+export { DPAPIProvider, encryptKeyWithDPAPI, isDPAPIAvailable } from './providers/dpapi.js';
 export { SessionCache } from './cache.js';
 export { createKeyId, sanitizeError, clearString } from './security.js';
 export { loadConfig } from './config.js';

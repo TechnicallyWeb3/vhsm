@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { getProvider, getDefaultProvider } from './providers/index.js';
+import { getProvider, getDefaultProvider, listProviders } from './providers/index.js';
 import { SessionCache } from './cache.js';
 import { createKeyId, sanitizeError, clearString } from './security.js';
 import { loadConfig } from './config.js';
@@ -48,9 +48,10 @@ program
 
 program
   .command('encrypt')
-  .description('Encrypt a dotenvx private key with a password')
+  .description('Encrypt a dotenvx private key')
   .option('-o, --output <path>', 'Output path for encrypted key', '.env.keys.encrypted')
-  .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing)')
+  .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi)', 'password')
+  .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing, password provider only)')
   .option('-nd, --no-delete', 'Do not delete the original .env.keys file after encryption')
   // Pass-through options for dotenvx encrypt
   .option('-fk, --env-keys-file <path>', 'Path to plaintext private key file', '.env.keys')
@@ -62,7 +63,7 @@ program
       const inputFile = options.envKeysFile || '.env.keys';
       // --no-delete sets options.delete to false, so we delete when delete is not false
       const shouldDelete = options.delete !== false;
-      await encryptKey(inputFile, options.output, options.password, shouldDelete, {
+      await encryptKey(inputFile, options.output, options.provider, options.password, shouldDelete, {
         envFile: options.envFile,
         key: options.key,
         excludeKey: options.excludeKey,
@@ -130,9 +131,10 @@ function loadEncryptedKeyFile(keyPath: string): string {
 
 /**
  * Parse all VHSM_PRIVATE_KEY* entries from encrypted file
+ * Supports both "encrypted:" (password) and "dpapi:" prefixes
  */
-function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encryptedValue: string }> {
-  const keys: Array<{ vhsmKey: string; encryptedValue: string }> = [];
+function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encryptedValue: string; provider: string }> {
+  const keys: Array<{ vhsmKey: string; encryptedValue: string; provider: string }> = [];
   const lines = content.split('\n');
   
   for (const line of lines) {
@@ -141,12 +143,13 @@ function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encrypted
       continue;
     }
     
-    // Match VHSM_PRIVATE_KEY[_SUFFIX]=encrypted:...
-    const match = /^(VHSM_PRIVATE_KEY[^=]*)=encrypted:(.*)/.exec(trimmed);
+    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi):...
+    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi):(.*)/.exec(trimmed);
     if (match) {
       keys.push({
         vhsmKey: match[1],
-        encryptedValue: match[2],
+        provider: match[2] === 'dpapi' ? 'dpapi' : 'password',
+        encryptedValue: match[3],
       });
     }
   }
@@ -187,9 +190,9 @@ function vhsmKeyToDotenvKey(vhsmKey: string): string {
  */
 function matchKeysToEnvFiles(
   envFiles: string[],
-  availableKeys: Array<{ vhsmKey: string; encryptedValue: string }>
-): Array<{ vhsmKey: string; dotenvKey: string; encryptedValue: string; envFile: string }> {
-  const keysToProcess: Array<{ vhsmKey: string; dotenvKey: string; encryptedValue: string; envFile: string }> = [];
+  availableKeys: Array<{ vhsmKey: string; encryptedValue: string; provider: string }>
+): Array<{ vhsmKey: string; dotenvKey: string; encryptedValue: string; provider: string; envFile: string }> {
+  const keysToProcess: Array<{ vhsmKey: string; dotenvKey: string; encryptedValue: string; provider: string; envFile: string }> = [];
   
   for (const envFile of envFiles) {
     const suffix = getEnvSuffix(envFile);
@@ -203,6 +206,7 @@ function matchKeysToEnvFiles(
         vhsmKey,
         dotenvKey,
         encryptedValue: keyEntry.encryptedValue,
+        provider: keyEntry.provider,
         envFile,
       });
     } else {
@@ -218,7 +222,7 @@ function matchKeysToEnvFiles(
  */
 async function decryptKeyWithCache(
   encryptedValue: string,
-  provider: any,
+  providerName: string,
   password: string | undefined,
   enableCache: boolean,
   cacheTimeout: number,
@@ -236,9 +240,12 @@ async function decryptKeyWithCache(
   // Decrypt if not cached
   if (!decryptedValue) {
     try {
-      // Pass password to provider if provided
+      // Get the appropriate provider
+      const provider = providerName === 'password' ? getDefaultProvider() : getProvider(providerName);
+      
+      // Pass password to provider if provided and it's the password provider
       if (password && provider.name === 'password') {
-        decryptedValue = await provider.decrypt(encryptedValue, password);
+        decryptedValue = await (provider as any).decrypt(encryptedValue, password);
       } else {
         decryptedValue = await provider.decrypt(encryptedValue);
       }
@@ -306,7 +313,10 @@ async function runCommand(command: string[], options: {
   opsOff?: boolean;
 }) {
   const config = loadConfig();
-  const { provider, enableCache, cacheTimeout } = getProviderAndCacheSettings(options, config);
+  const enableCache = options.cache !== false && (config.enableCache !== false);
+  const cacheTimeout = options.cacheTimeout 
+    ? parseInt(options.cacheTimeout, 10) 
+    : (config.cacheTimeout || 3600000);
 
   // Load and parse encrypted key file
   const keyPath = options.encryptedKeyFile || '.env.keys.encrypted';
@@ -325,13 +335,13 @@ async function runCommand(command: string[], options: {
     throw new Error('No matching encrypted keys found for the specified env files');
   }
 
-  // Decrypt all keys
+  // Decrypt all keys (each key may use a different provider)
   const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string }> = [];
 
   for (const keyEntry of keysToProcess) {
     const decryptedValue = await decryptKeyWithCache(
       keyEntry.encryptedValue,
-      provider,
+      keyEntry.provider,
       options.password,
       enableCache,
       cacheTimeout,
@@ -438,7 +448,10 @@ async function decryptCommand(options: {
   excludeKey?: string[];
 }) {
   const config = loadConfig();
-  const { provider, enableCache, cacheTimeout } = getProviderAndCacheSettings(options, config);
+  const enableCache = options.cache !== false && (config.enableCache !== false);
+  const cacheTimeout = options.cacheTimeout 
+    ? parseInt(options.cacheTimeout, 10) 
+    : (config.cacheTimeout || 3600000);
 
   // Load and parse encrypted key file
   const keyPath = options.encryptedKeyFile || '.env.keys.encrypted';
@@ -457,13 +470,13 @@ async function decryptCommand(options: {
     throw new Error('No matching encrypted keys found for the specified env files');
   }
 
-  // Decrypt all keys
+  // Decrypt all keys (each key may use a different provider)
   const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string; envFile: string }> = [];
 
   for (const keyEntry of keysToProcess) {
     const decryptedValue = await decryptKeyWithCache(
       keyEntry.encryptedValue,
-      provider,
+      keyEntry.provider,
       options.password,
       enableCache,
       cacheTimeout,
@@ -476,7 +489,7 @@ async function decryptCommand(options: {
       envFile: keyEntry.envFile,
     });
 
-    console.log(`✅ Decrypted ${keyEntry.vhsmKey} → ${keyEntry.dotenvKey}`);
+    console.log(`✅ Decrypted ${keyEntry.vhsmKey} → ${keyEntry.dotenvKey} (provider: ${keyEntry.provider})`);
   }
 
   // If --restore is specified, write the keys to a file
@@ -560,6 +573,7 @@ async function decryptCommand(options: {
 async function encryptKey(
   keyFile: string, 
   outputPath: string, 
+  providerName: string = 'password',
   providedPassword?: string, 
   shouldDelete: boolean = true,
   dotenvxOptions?: {
@@ -569,8 +583,19 @@ async function encryptKey(
     excludeKey?: string[];
   }
 ) {
-  const { encryptKeyWithPassword } = await import('./providers/password.js');
   const inquirer = (await import('inquirer')).default;
+  
+  // Validate provider
+  const config = loadConfig();
+  const availableProviders = listProviders();
+  if (!availableProviders.includes(providerName)) {
+    throw new Error(`Unknown provider: ${providerName}. Available providers: ${availableProviders.join(', ')}`);
+  }
+  
+  // DPAPI doesn't support password parameter
+  if (providerName === 'dpapi' && providedPassword) {
+    console.warn('⚠️  Password parameter is ignored when using DPAPI provider');
+  }
 
   // Step 1: Run dotenvx encrypt first to generate/update .env.keys
   console.log('Running dotenvx encrypt...');
@@ -622,34 +647,17 @@ async function encryptKey(
     
     // Try to decrypt the existing encrypted file
     try {
-      const { getDefaultProvider } = await import('./providers/index.js');
-      const provider = getDefaultProvider();
-      
       const encryptedContent = readFileSync(outputPath, 'utf-8').trim();
-      // Extract one or more encrypted keys (supporting possible "VHSM_PRIVATE_KEY" suffixes)
-      const encryptedKeys: string[] = [];
-      const lines = encryptedContent.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('#')) {
-          // Skip comments
-          continue;
-        }
-        // Match lines beginning with VHSM_PRIVATE_KEY (with optional suffix), e.g. VHSM_PRIVATE_KEY, VHSM_PRIVATE_KEY_XYZ, etc.
-        const match = /^VHSM_PRIVATE_KEY[^=]*=encrypted:(.*)/.exec(trimmed);
-        if (match) {
-          encryptedKeys.push(match[1]);
-        }
-      }
+      const existingKeys = parseEncryptedKeys(encryptedContent);
 
-      // Attempt decryption (will prompt for password if not provided)
-      if (providedPassword) {
-        for (const key of encryptedKeys) {
-          await (provider as any).decrypt(key, providedPassword);
-        }
-      } else {
-        for (const key of encryptedKeys) {
-          await provider.decrypt(key);
+      // Attempt decryption (will use the provider specified in each key)
+      for (const keyEntry of existingKeys) {
+        const provider = keyEntry.provider === 'password' ? getDefaultProvider() : getProvider(keyEntry.provider);
+        
+        if (providedPassword && provider.name === 'password') {
+          await (provider as any).decrypt(keyEntry.encryptedValue, providedPassword);
+        } else {
+          await provider.decrypt(keyEntry.encryptedValue);
         }
       }
       
@@ -687,59 +695,72 @@ async function encryptKey(
   const keyKeys = keyLines.map(line => line.split('=')[0].trim());
   const keyValues = keyLines.map(line => line.split('=').slice(1).join('=').trim());
 
-  let password: string;
-  let confirmPassword: string = '';
-
-  if (providedPassword) {
-    // Use provided password (for testing)
-    password = providedPassword;
-    if (password.length < 8) {
-      throw new Error('Passphrase must be at least 8 characters');
-    }
-  } else {
-    // Prompt for password
-    const prompts = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'password',
-        message: 'Enter passphrase to encrypt the key:',
-        mask: '*',
-        validate: (input: string) => {
-          if (!input || input.length < 8) {
-            return 'Passphrase must be at least 8 characters';
-          }
-          return true;
-        },
-      },
-      {
-        type: 'password',
-        name: 'confirmPassword',
-        message: 'Confirm passphrase:',
-        mask: '*',
-        validate: (input: string, answers: any) => {
-          if (input !== answers.password) {
-            return 'Passphrases do not match';
-          }
-          return true;
-        },
-      },
-    ]);
-    password = prompts.password;
-    confirmPassword = prompts.confirmPassword;
-  }
-
+  // Encrypt based on provider
   let outputContent = `#/-----------------!VHSM_PRIVATE_KEYS!------------------/
 #/ VHSM encrypted keys. DO NOT commit to source control /
 #/------------------------------------------------------/
 `;
-  for (const [i, key] of keyValues.entries()) {
-    // Encrypt
-    const encrypted = encryptKeyWithPassword(key, password);
 
-    // Format as VHSM_PRIVATE_KEY=encrypted:...
-    const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=encrypted:${encrypted}`;
+  if (providerName === 'dpapi') {
+    // DPAPI encryption - no password needed
+    const { encryptKeyWithDPAPI } = await import('./providers/dpapi.js');
+    
+    console.log('Encrypting keys with Windows DPAPI...');
+    for (const [i, key] of keyValues.entries()) {
+      const encrypted = encryptKeyWithDPAPI(key);
+      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=dpapi:${encrypted}`;
+      outputContent += `\n${encapsulatedKey}`;
+    }
+  } else if (providerName === 'password') {
+    // Password-based encryption
+    const { encryptKeyWithPassword } = await import('./providers/password.js');
+    
+    let password: string;
 
-    outputContent += `\n${encapsulatedKey}`;
+    if (providedPassword) {
+      // Use provided password (for testing)
+      password = providedPassword;
+      if (password.length < 8) {
+        throw new Error('Passphrase must be at least 8 characters');
+      }
+    } else {
+      // Prompt for password
+      const prompts = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'password',
+          message: 'Enter passphrase to encrypt the key:',
+          mask: '*',
+          validate: (input: string) => {
+            if (!input || input.length < 8) {
+              return 'Passphrase must be at least 8 characters';
+            }
+            return true;
+          },
+        },
+        {
+          type: 'password',
+          name: 'confirmPassword',
+          message: 'Confirm passphrase:',
+          mask: '*',
+          validate: (input: string, answers: any) => {
+            if (input !== answers.password) {
+              return 'Passphrases do not match';
+            }
+            return true;
+          },
+        },
+      ]);
+      password = prompts.password;
+    }
+
+    for (const [i, key] of keyValues.entries()) {
+      const encrypted = encryptKeyWithPassword(key, password);
+      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=encrypted:${encrypted}`;
+      outputContent += `\n${encapsulatedKey}`;
+    }
+  } else {
+    throw new Error(`Unsupported encryption provider: ${providerName}`);
   }
 
   // Write to file
