@@ -1,0 +1,16 @@
+{
+  "name": "vhsm-test-app",
+  "version": "1.0.0",
+  "description": "Test application to demonstrate vhsm workflow",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-env.js",
+    "demo": "node demo.js",
+    "create-env": "node create-env.js"
+  },
+  "dependencies": {
+    "@dotenvx/dotenvx": "^0.23.0"
+  }
+}
+

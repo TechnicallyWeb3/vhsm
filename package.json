@@ -1,0 +1,42 @@
+{
+  "name": "vhsm",
+  "version": "0.1.0",
+  "description": "Virtual HSM - Secure dotenvx wrapper with pluggable key decryption",
+  "type": "module",
+  "bin": {
+    "vhsm": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "dotenvx",
+    "security",
+    "hsm",
+    "key-management",
+    "encryption",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "inquirer": "^9.2.12"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.10.6",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "@dotenvx/dotenvx": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
