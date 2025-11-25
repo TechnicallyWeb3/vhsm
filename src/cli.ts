@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { Command } from 'commander';
 import { getProvider, getDefaultProvider, listProviders } from './providers/index.js';
 import { SessionCache } from './cache.js';
@@ -10,7 +11,45 @@ import { createKeyId, sanitizeError, clearString } from './security.js';
 import { loadConfig } from './config.js';
 import type { VhsmConfig } from './types.js';
 
+const require = createRequire(import.meta.url);
+const resolvedDotenvxBin = resolveDotenvxBin();
+let warnedAboutGlobalDotenvx = false;
+
 const program = new Command();
+
+function resolveDotenvxBin(): string | null {
+  try {
+    const pkgPath = require.resolve('@dotenvx/dotenvx/package.json');
+    const pkgDir = dirname(pkgPath);
+    const pkgJson = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    const binField =
+      typeof pkgJson.bin === 'string'
+        ? pkgJson.bin
+        : pkgJson.bin?.dotenvx;
+    if (binField) {
+      return join(pkgDir, binField);
+    }
+  } catch (error) {
+    // ignore - fallback will use global command
+  }
+  return null;
+}
+
+function spawnDotenvx(args: string[], options: Parameters<typeof spawn>[2]) {
+  if (resolvedDotenvxBin) {
+    return spawn(process.execPath, [resolvedDotenvxBin, ...args], {
+      ...options,
+      shell: false,
+    });
+  }
+
+  if (!warnedAboutGlobalDotenvx) {
+    console.warn('⚠️  Local @dotenvx/dotenvx not found. Falling back to global "dotenvx" command.');
+    warnedAboutGlobalDotenvx = true;
+  }
+
+  return spawn('dotenvx', args, options);
+}
 
 program
   .name('vhsm')
@@ -410,7 +449,7 @@ async function runCommand(command: string[], options: {
   dotenvxArgs.push('--', ...command);
 
   // Spawn dotenvx run with the command
-  const child = spawn('dotenvx', dotenvxArgs, {
+  const child = spawnDotenvx(dotenvxArgs, {
     stdio: 'inherit',
     env,
     shell: process.platform === 'win32',
@@ -545,7 +584,7 @@ async function decryptCommand(options: {
   }
 
   // Spawn dotenvx decrypt
-  const child = spawn('dotenvx', dotenvxArgs, {
+  const child = spawnDotenvx(dotenvxArgs, {
     stdio: 'inherit',
     env,
     shell: process.platform === 'win32',
@@ -624,7 +663,7 @@ async function encryptKey(
     dotenvxArgs.push('-ek', ...dotenvxOptions.excludeKey);
   }
   
-  const dotenvxEncrypt = spawn('dotenvx', dotenvxArgs, {
+  const dotenvxEncrypt = spawnDotenvx(dotenvxArgs, {
     stdio: 'inherit',
     shell: process.platform === 'win32',
   });

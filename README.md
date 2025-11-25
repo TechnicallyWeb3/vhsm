@@ -4,11 +4,13 @@
 
 ## Features
 
-- 🔐 **Secure Key Decryption**: Prompts for passphrase at runtime to decrypt dotenvx private keys
+- 🔐 **Secure Key Decryption**: Password (AES-256-GCM), Windows DPAPI, and FIDO2/Yubikey providers built-in
 - 💾 **In-Memory Only**: Decrypted keys never touch disk or logs
-- 🔌 **Pluggable Architecture**: Extensible provider system for different key management backends
+- 🔌 **Pluggable Architecture**: Easily extend with your own provider
 - ⏱️ **Session Caching**: Optional in-memory cache with timeout to reduce repeated prompts
 - 🛡️ **Secure Defaults**: Built-in best practices for cryptographic key handling
+- 🪟 **Native Windows Support**: DPAPI ties secrets to the signed-in Windows user
+- 🔑 **Hardware Backed Security**: FIDO2/Yubikey flows with beautiful, guided UI
 - 🚫 **No Secret Leakage**: Error handling sanitizes messages to prevent information disclosure
 - 🔧 **Developer-Friendly**: Simple CLI workflow that integrates seamlessly with dotenvx
 
@@ -26,20 +28,21 @@ npm install --save-dev vhsm
 
 ### 1. Encrypt Your dotenvx Private Key
 
-Encrypt your dotenvx private key (automatically runs `dotenvx encrypt` first if needed):
+Run `vhsm encrypt` from your project root. Choose a provider:
 
-```bash
-vhsm encrypt
-# or with custom options
-vhsm encrypt -fk .env.keys -o .env.keys.encrypted
-```
+| Scenario | Command |
+| --- | --- |
+| Cross-platform / CI friendly | `vhsm encrypt` (password) |
+| Windows workstation | `vhsm encrypt -p dpapi` |
+| Hardware-backed (Yubikey) | `vhsm encrypt -p fido2` |
 
-This will:
-- Run `dotenvx encrypt` to generate/update `.env.keys` from your `.env` files
-- Prompt you for a passphrase (minimum 8 characters)
-- Encrypt the key using AES-256-GCM
-- Save it as `VHSM_PRIVATE_KEY=encrypted:...` to `.env.keys.encrypted` with secure file permissions (600)
-- Delete the original `.env.keys` file (use `--no-delete` to keep it)
+Each provider automatically runs `dotenvx encrypt` first, then:
+
+- **password**: prompts for an 8+ char passphrase and stores `encrypted:...`
+- **dpapi**: no password prompts; Windows ties data to the signed-in user
+- **fido2**: opens a local browser page so you can tap your Yubikey once; credentials are reused for multiple keys
+
+Output is written to `.env.keys.encrypted` (600 perms). Remove plaintext `.env.keys` unless `--no-delete`.
 
 ### 2. Use vhsm to Run Commands
 
@@ -91,10 +94,13 @@ Create a `.vhsmrc.json` or `.vhsm.json` file in your project root:
 }
 ```
 
-Configuration is also supported via environment variables:
-- `VHSM_PROVIDER`: Provider name (default: `password`)
-- `VHSM_CACHE_TIMEOUT`: Cache timeout in milliseconds (default: `3600000`)
-- `VHSM_ENABLE_CACHE`: Enable/disable caching (default: `true`)
+- Set `"provider": "dpapi"` on Windows to default to DPAPI.
+- Set `"provider": "fido2"` if you always want the Yubikey flow.
+
+Environment variable overrides:
+- `VHSM_PROVIDER`: `password`, `dpapi`, or `fido2`
+- `VHSM_CACHE_TIMEOUT`: Milliseconds (default `3600000`)
+- `VHSM_ENABLE_CACHE`: `true` / `false`
 
 ### Command-Line Options
 
@@ -182,11 +188,42 @@ Options:
 - Stack traces are limited to prevent information disclosure
 - Failed decryption attempts don't reveal key structure
 
+## Providers
+
+| Provider | Platforms | Interaction | Best For |
+| --- | --- | --- | --- |
+| `password` (default) | All | Passphrase prompt | Portability, CI, team sharing |
+| `dpapi` | Windows 10/11+ | None | Individual Windows workstations |
+| `fido2` | All | Yubikey touch + browser | Hardware-backed secrets |
+
+👉 See `FIDO2-QUICKSTART.md` or `FIDO2-GUIDE.md` for screenshots, troubleshooting, and architecture details.
+
+### Windows DPAPI
+
+- Encrypt: `vhsm encrypt -p dpapi`
+- Run: `vhsm run -p dpapi npm start`
+- Keys can only be decrypted by the same Windows user profile.
+- Great for local dev; not suitable for CI or shared servers.
+
+### FIDO2 / Yubikey
+
+- Encrypt: `vhsm encrypt -p fido2`
+- Run: `vhsm run -p fido2 npm start`
+- Browser flow opens automatically (`http://localhost:8765`) with polished UI.
+- One credential protects multiple env files; touch once per session to decrypt.
+- Works cross-platform as long as a browser + FIDO2 key is present.
+
 ## Architecture
 
 ### Provider System
 
-vhsm uses a pluggable provider architecture for key decryption. The default `password` provider uses AES-256-GCM encryption with PBKDF2 key derivation.
+vhsm uses a pluggable provider architecture. The built-in providers satisfy most workflows, but you can register custom ones.
+
+## Additional Guides
+
+- [`FIDO2-QUICKSTART.md`](./FIDO2-QUICKSTART.md) – test flow, screenshots, troubleshooting.
+- [`FIDO2-GUIDE.md`](./FIDO2-GUIDE.md) – deep dive into security model, remote access tips, FAQs.
+- [`PUBLISHING.md`](./PUBLISHING.md) – instructions for shipping vhsm to npm.
 
 #### Creating Custom Providers
 

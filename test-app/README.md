@@ -31,14 +31,20 @@ This creates `.env.keys` in the test-app directory.
 
 ### 4. Encrypt the Key with vhsm
 
-From the project root (not test-app), encrypt the key:
+From the project root (not test-app), encrypt the key with your preferred provider:
 
 ```bash
-# From project root
-vhsm encrypt test-app/.env.keys -o test-app/.env.keys.encrypted
+# Password (default)
+vhsm encrypt -fk test-app/.env.keys -o test-app/.env.keys.encrypted
+
+# Windows DPAPI (no passphrase prompts)
+vhsm encrypt -p dpapi -fk test-app/.env.keys -o test-app/.env.keys.encrypted
+
+# FIDO2 / Yubikey (browser flow)
+vhsm encrypt -p fido2 -fk test-app/.env.keys -o test-app/.env.keys.encrypted
 ```
 
-You'll be prompted for a passphrase. Remember this passphrase!
+For password provider, you'll be prompted for a passphrase. DPAPI and FIDO2 flows take care of the protection automatically.
 
 ### 5. Secure the Files
 
@@ -62,12 +68,16 @@ Add to `.gitignore`:
 From the project root:
 
 ```bash
-# Run the server
+# Run the server (uses default provider)
 vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
+
+# Force DPAPI or FIDO2 explicitly
+vhsm run -p dpapi -ef test-app/.env.keys.encrypted -- node test-app/server.js
+vhsm run -p fido2 -ef test-app/.env.keys.encrypted -- node test-app/server.js
 
 # Or use npm script (if configured)
 cd test-app
-vhsm run -k .env.keys.encrypted -- npm start
+vhsm run -p fido2 -k .env.keys.encrypted -- npm start
 ```
 
 ### Test Environment Variables

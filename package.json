@@ -46,6 +46,7 @@
     "url": "https://github.com/TechnicallyWeb3/vhsm/issues"
   },
   "dependencies": {
+    "@dotenvx/dotenvx": "^1.51.1",
     "commander": "^11.1.0",
     "fido2-lib": "^3.5.5",
     "inquirer": "^9.2.12"

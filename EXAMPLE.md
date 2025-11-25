@@ -15,19 +15,27 @@ This creates `.env.keys` in your project.
 
 ### 2. Encrypt the Key
 
-Encrypt your dotenvx private key with vhsm (automatically runs `dotenvx encrypt` first):
+Pick the provider that matches your workflow:
 
 ```bash
+# Password (default, works everywhere)
 vhsm encrypt
-# or with custom options
-vhsm encrypt -fk .env.keys -o .env.keys.encrypted
+
+# Windows DPAPI (machine/user bound)
+vhsm encrypt -p dpapi
+
+# FIDO2 / Yubikey (hardware-backed)
+vhsm encrypt -p fido2
+
+# Custom paths still work with any provider
+vhsm encrypt -p fido2 -fk .env.keys -o .env.keys.encrypted
 ```
 
-You'll be prompted to:
-- Enter a passphrase (minimum 8 characters)
-- Confirm the passphrase (unless using `-pw` flag)
+- **password** prompts for an 8+ character passphrase.
+- **dpapi** never prompts and ties secrets to your Windows account.
+- **fido2** launches a browser flow where you tap your Yubikey once (credential is reused for multiple keys).
 
-The encrypted key is saved as `VHSM_PRIVATE_KEY=encrypted:...` to `.env.keys.encrypted` with secure permissions (600). The original `.env.keys` file is deleted by default (use `-nd` or `--no-delete` to keep it).
+All providers output `VHSM_PRIVATE_KEY=<provider>:...` lines to `.env.keys.encrypted` (mode 600). Delete `.env.keys` unless passing `-nd`.
 
 ### 3. Use vhsm to Run Commands
 
@@ -39,6 +47,11 @@ dotenvx run npm start
 
 # After (secure - key encrypted, decrypted at runtime)
 vhsm run npm start
+
+# Force a specific provider for this run
+vhsm run -p password npm start
+vhsm run -p dpapi npm start      # Windows-only
+vhsm run -p fido2 npm start      # Opens browser for Yubikey touch
 ```
 
 ### 4. Add to .gitignore

@@ -1,6 +1,6 @@
 {
   "name": "vhsm-test-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Test application to demonstrate vhsm workflow",
   "type": "module",
   "scripts": {
@@ -13,4 +13,3 @@
     "@dotenvx/dotenvx": "^0.23.0"
   }
 }
-
