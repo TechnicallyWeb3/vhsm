@@ -15,17 +15,19 @@ This creates `.env.keys` in your project.
 
 ### 2. Encrypt the Key
 
-Encrypt your dotenvx private key with vhsm:
+Encrypt your dotenvx private key with vhsm (automatically runs `dotenvx encrypt` first):
 
 ```bash
-vhsm encrypt .env.keys -o .env.keys.encrypted
+vhsm encrypt
+# or with custom options
+vhsm encrypt -fk .env.keys -o .env.keys.encrypted
 ```
 
 You'll be prompted to:
 - Enter a passphrase (minimum 8 characters)
-- Confirm the passphrase
+- Confirm the passphrase (unless using `-pw` flag)
 
-The encrypted key is saved to `.env.keys.encrypted` with secure permissions (600).
+The encrypted key is saved as `VHSM_PRIVATE_KEY=encrypted:...` to `.env.keys.encrypted` with secure permissions (600). The original `.env.keys` file is deleted by default (use `-nd` or `--no-delete` to keep it).
 
 ### 3. Use vhsm to Run Commands
 
@@ -48,12 +50,22 @@ echo ".env.keys.encrypted" >> .gitignore
 echo ".env.keys" >> .gitignore  # Also ignore plaintext keys
 ```
 
+### 5. Restore Keys When Needed
+
+If you need to restore the `.env.keys` file from the encrypted version:
+
+```bash
+vhsm decrypt --restore
+# or with custom paths
+vhsm decrypt -ef .env.keys.encrypted -r -fk .env.keys
+```
+
 ## Advanced Usage
 
 ### Custom Key Path
 
 ```bash
-vhsm run -k .secrets/dotenvx.key.encrypted npm start
+vhsm run -ef .secrets/dotenvx.key.encrypted npm start
 ```
 
 ### Disable Caching
@@ -61,6 +73,8 @@ vhsm run -k .secrets/dotenvx.key.encrypted npm start
 For maximum security, disable session caching:
 
 ```bash
+vhsm run -nc npm start
+# or
 vhsm run --no-cache npm start
 ```
 
@@ -69,6 +83,8 @@ vhsm run --no-cache npm start
 Set cache to expire after 30 minutes:
 
 ```bash
+vhsm run -ct 1800000 npm start
+# or
 vhsm run --cache-timeout 1800000 npm start
 ```
 
@@ -133,10 +149,13 @@ vhsm run npm start
 vhsm run npm start
 
 # Override cache timeout for this command
-vhsm run --cache-timeout 600000 npm start
+vhsm run -ct 600000 npm start
 
 # Disable cache for this command
-vhsm run --no-cache npm start
+vhsm run -nc npm start
+
+# Use custom encrypted key file
+vhsm run -ef custom/path/.env.keys.encrypted npm start
 ```
 
 ## Security Scenarios
@@ -151,13 +170,19 @@ vhsm run --no-cache npm start
 2. **Each developer encrypts with their own passphrase**:
    ```bash
    # Developer A
-   vhsm encrypt .env.keys -o .env.keys.encrypted
+   vhsm encrypt -o .env.keys.encrypted
    
    # Developer B (with their own passphrase)
-   vhsm encrypt .env.keys -o .env.keys.encrypted
+   vhsm encrypt -o .env.keys.encrypted
    ```
 
 3. **Or use a shared team passphrase** (stored in password manager)
+
+4. **Restore keys for new team members**:
+   ```bash
+   # New team member receives encrypted key and passphrase
+   vhsm decrypt -r -ef .env.keys.encrypted
+   ```
 
 ### CI/CD Integration
 
@@ -177,12 +202,31 @@ Use different encrypted keys for different environments:
 
 ```bash
 # Development
-vhsm encrypt .env.keys.dev -o .env.keys.dev.encrypted
+vhsm encrypt -fk .env.keys.dev -o .env.keys.dev.encrypted
 
 # Staging
-vhsm encrypt .env.keys.staging -o .env.keys.staging.encrypted
+vhsm encrypt -fk .env.keys.staging -o .env.keys.staging.encrypted
 
 # Production (use proper secret management, not vhsm)
+```
+
+### Using dotenvx Pass-Through Options
+
+```bash
+# Encrypt specific keys only
+vhsm encrypt -k DATABASE_URL API_KEY
+
+# Exclude specific keys from encryption
+vhsm encrypt -ek DATABASE_URL
+
+# Encrypt specific env files
+vhsm encrypt -f .env.production .env.staging
+
+# Decrypt specific keys
+vhsm decrypt -k DATABASE_URL API_KEY
+
+# Decrypt specific env files
+vhsm decrypt -f .env.production
 ```
 
 ## Troubleshooting Examples

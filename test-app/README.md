@@ -24,7 +24,7 @@ npm install --save-dev @dotenvx/dotenvx
 First, generate a dotenvx private key:
 
 ```bash
-dotenvx encrypt
+vhsm encrypt
 ```
 
 This creates `.env.keys` in the test-app directory.
@@ -63,7 +63,7 @@ From the project root:
 
 ```bash
 # Run the server
-vhsm run -k test-app/.env.keys.encrypted -- node test-app/server.js
+vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
 
 # Or use npm script (if configured)
 cd test-app
@@ -93,12 +93,12 @@ vhsm run -k test-app/.env.keys.encrypted -- node test-app/demo.js
 
 2. **Run with vhsm** (first time - will prompt for passphrase):
    ```bash
-   vhsm run -k test-app/.env.keys.encrypted -- node test-app/server.js
+   vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
    ```
 
 3. **Run again** (cached - no prompt):
    ```bash
-   vhsm run -k test-app/.env.keys.encrypted -- node test-app/server.js
+   vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
    ```
 
 4. **Clear cache** (next run will prompt again):

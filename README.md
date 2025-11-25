@@ -26,16 +26,20 @@ npm install --save-dev vhsm
 
 ### 1. Encrypt Your dotenvx Private Key
 
-First, encrypt your existing dotenvx private key:
+Encrypt your dotenvx private key (automatically runs `dotenvx encrypt` first if needed):
 
 ```bash
-vhsm encrypt .env.keys -o .env.keys.encrypted
+vhsm encrypt
+# or with custom options
+vhsm encrypt -fk .env.keys -o .env.keys.encrypted
 ```
 
 This will:
+- Run `dotenvx encrypt` to generate/update `.env.keys` from your `.env` files
 - Prompt you for a passphrase (minimum 8 characters)
 - Encrypt the key using AES-256-GCM
-- Save it to `.env.keys.encrypted` with secure file permissions (600)
+- Save it as `VHSM_PRIVATE_KEY=encrypted:...` to `.env.keys.encrypted` with secure file permissions (600)
+- Delete the original `.env.keys` file (use `--no-delete` to keep it)
 
 ### 2. Use vhsm to Run Commands
 
@@ -45,6 +49,8 @@ Instead of using `dotenvx run` directly, use `vhsm run`:
 vhsm run npm start
 # or
 vhsm run -- node server.js
+# or with custom encrypted key file
+vhsm run -ef custom/path/.env.keys.encrypted -- npm start
 ```
 
 vhsm will:
@@ -92,14 +98,54 @@ Configuration is also supported via environment variables:
 
 ### Command-Line Options
 
+#### `vhsm run`
+
 ```bash
 vhsm run [options] <command...>
 
 Options:
-  -k, --key <path>           Path to encrypted private key file (default: .env.keys.encrypted)
-  -p, --provider <name>      Key decryption provider to use (default: password)
-  --no-cache                 Disable session caching
-  --cache-timeout <ms>       Cache timeout in milliseconds (default: 3600000)
+  -ef, --encrypted-key <path>  Path to encrypted private key file (default: .env.keys.encrypted)
+  -p, --provider <name>        Key decryption provider to use (default: password)
+  -pw, --password <pass>       Password/passphrase for decryption (for testing)
+  -nc, --no-cache              Disable session caching
+  -ct, --cache-timeout <ms>     Cache timeout in milliseconds (default: 3600000)
+```
+
+#### `vhsm encrypt`
+
+```bash
+vhsm encrypt [options]
+
+Options:
+  -o, --output <path>          Output path for encrypted key (default: .env.keys.encrypted)
+  -pw, --password <pass>        Password/passphrase for encryption (for testing)
+  -nd, --no-delete              Do not delete the original .env.keys file after encryption
+  -fk, --env-keys-file <path>   Path to plaintext private key file (default: .env.keys)
+  
+  # Pass-through options for dotenvx encrypt:
+  -f, --env-file <paths...>     Path(s) to your env file(s)
+  -k, --key <keys...>           Key(s) to encrypt (default: all keys in file)
+  -ek, --exclude-key <keys...>  Key(s) to exclude from encryption (default: none)
+```
+
+#### `vhsm decrypt`
+
+```bash
+vhsm decrypt [options]
+
+Options:
+  -ef, --encrypted-key <path>   Path to encrypted private key file (default: .env.keys.encrypted)
+  -p, --provider <name>           Key decryption provider to use (default: password)
+  -pw, --password <pass>         Password/passphrase for decryption (for testing)
+  -nc, --no-cache                Disable session caching
+  -ct, --cache-timeout <ms>      Cache timeout in milliseconds (default: 3600000)
+  -r, --restore                  Restore the decrypted key to a .env.keys file
+  -fk, --env-keys-file <path>    Output path for restored key file (used with --restore) (default: .env.keys)
+  
+  # Pass-through options for dotenvx decrypt:
+  -f, --env-file <paths...>      Path(s) to your env file(s)
+  -k, --key <keys...>            Key(s) to decrypt (default: all keys in file)
+  -ek, --exclude-key <keys...>   Key(s) to exclude from decryption (default: none)
 ```
 
 ## Security Best Practices
