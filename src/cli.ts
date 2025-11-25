@@ -50,8 +50,8 @@ program
   .command('encrypt')
   .description('Encrypt a dotenvx private key')
   .option('-o, --output <path>', 'Output path for encrypted key', '.env.keys.encrypted')
-  .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi)', 'password')
-  .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing, password provider only)')
+  .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi, tpm2)', 'password')
+  .option('-pw, --password <pass>', 'Password/passphrase for encryption (password/tpm2 providers only)')
   .option('-nd, --no-delete', 'Do not delete the original .env.keys file after encryption')
   // Pass-through options for dotenvx encrypt
   .option('-fk, --env-keys-file <path>', 'Path to plaintext private key file', '.env.keys')
@@ -131,7 +131,7 @@ function loadEncryptedKeyFile(keyPath: string): string {
 
 /**
  * Parse all VHSM_PRIVATE_KEY* entries from encrypted file
- * Supports both "encrypted:" (password) and "dpapi:" prefixes
+ * Supports "encrypted:" (password), "dpapi:", and "tpm2:" prefixes
  */
 function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encryptedValue: string; provider: string }> {
   const keys: Array<{ vhsmKey: string; encryptedValue: string; provider: string }> = [];
@@ -143,12 +143,21 @@ function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; encrypted
       continue;
     }
     
-    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi):...
-    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi):(.*)/.exec(trimmed);
+    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi|tpm2):...
+    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi|tpm2):(.*)/.exec(trimmed);
     if (match) {
+      const providerPrefix = match[2];
+      let provider = 'password';
+      
+      if (providerPrefix === 'dpapi') {
+        provider = 'dpapi';
+      } else if (providerPrefix === 'tpm2') {
+        provider = 'tpm2';
+      }
+      
       keys.push({
         vhsmKey: match[1],
-        provider: match[2] === 'dpapi' ? 'dpapi' : 'password',
+        provider,
         encryptedValue: match[3],
       });
     }
@@ -709,6 +718,69 @@ async function encryptKey(
     for (const [i, key] of keyValues.entries()) {
       const encrypted = encryptKeyWithDPAPI(key);
       const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=dpapi:${encrypted}`;
+      outputContent += `\n${encapsulatedKey}`;
+    }
+  } else if (providerName === 'tpm2') {
+    // TPM2 encryption - optional password for additional security
+    const { encryptKeyWithTPM2 } = await import('./providers/tpm2.js');
+    
+    let password: string | undefined;
+
+    if (providedPassword) {
+      // Use provided password
+      password = providedPassword;
+      if (password.length < 8) {
+        throw new Error('TPM2 auth passphrase must be at least 8 characters');
+      }
+      console.log('Encrypting keys with TPM2 (with authorization)...');
+    } else {
+      // Ask if user wants to set auth password
+      const authPrompt = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'useAuth',
+          message: 'Set authorization password for TPM2 seal? (Recommended for extra security)',
+          default: true,
+        },
+      ]);
+
+      if (authPrompt.useAuth) {
+        const prompts = await inquirer.prompt([
+          {
+            type: 'password',
+            name: 'password',
+            message: 'Enter TPM2 authorization password:',
+            mask: '*',
+            validate: (input: string) => {
+              if (!input || input.length < 8) {
+                return 'Password must be at least 8 characters';
+              }
+              return true;
+            },
+          },
+          {
+            type: 'password',
+            name: 'confirmPassword',
+            message: 'Confirm password:',
+            mask: '*',
+            validate: (input: string, answers: any) => {
+              if (input !== answers.password) {
+                return 'Passwords do not match';
+              }
+              return true;
+            },
+          },
+        ]);
+        password = prompts.password;
+        console.log('Encrypting keys with TPM2 (with authorization)...');
+      } else {
+        console.log('Encrypting keys with TPM2 (no authorization - hardware-only)...');
+      }
+    }
+
+    for (const [i, key] of keyValues.entries()) {
+      const encrypted = encryptKeyWithTPM2(key, password);
+      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=tpm2:${encrypted}`;
       outputContent += `\n${encapsulatedKey}`;
     }
   } else if (providerName === 'password') {
