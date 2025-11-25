@@ -1,7 +1,4 @@
 node_modules/
-.env
-.env.key
-.env.key.encrypted
 *.log
 .DS_Store
 

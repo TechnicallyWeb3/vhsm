@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { getProvider, getDefaultProvider } from './providers/index.js';
@@ -57,6 +57,26 @@ program
   });
 
 program
+  .command('decrypt')
+  .description('Decrypt dotenvx private key and run dotenvx decrypt')
+  .option('-k, --key <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
+  .option('-p, --provider <name>', 'Key decryption provider to use', 'password')
+  .option('--password <pass>', 'Password/passphrase for decryption (for testing)')
+  .option('--no-cache', 'Disable session caching')
+  .option('--cache-timeout <ms>', 'Cache timeout in milliseconds', '3600000')
+  .option('--restore', 'Restore the decrypted key to a .env.keys file')
+  .option('-o, --output <path>', 'Output path for restored key file (used with --restore)', '.env.keys')
+  .action(async (options) => {
+    try {
+      await decryptCommand(options);
+    } catch (error) {
+      const sanitized = sanitizeError(error);
+      console.error(`Error: ${sanitized.message}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('clear-cache')
   .description('Clear the session cache')
   .action(() => {
@@ -97,12 +117,16 @@ async function runCommand(command: string[], options: {
   }
 
   // Extract the encrypted data from the file
-  // Handle both formats:
-  // - New format: ENCAPSULATED_KEY=encrypted:...
+  // Handle multiple formats:
+  // - New format: VHSM_PRIVATE_KEY=encrypted:...
+  // - Legacy format: ENCAPSULATED_KEY=encrypted:...
   // - Old format: raw encrypted data (salt:iv:tag:encryptedData)
   let encryptedKey: string;
-  if (encryptedKeyContent.startsWith('ENCAPSULATED_KEY=encrypted:')) {
+  if (encryptedKeyContent.startsWith('VHSM_PRIVATE_KEY=encrypted:')) {
     // New format: extract the encrypted part after "encrypted:"
+    encryptedKey = encryptedKeyContent.substring('VHSM_PRIVATE_KEY=encrypted:'.length);
+  } else if (encryptedKeyContent.startsWith('ENCAPSULATED_KEY=encrypted:')) {
+    // Legacy format: extract the encrypted part after "encrypted:"
     encryptedKey = encryptedKeyContent.substring('ENCAPSULATED_KEY=encrypted:'.length);
   } else {
     // Old format: use the content as-is
@@ -197,9 +221,220 @@ async function runCommand(command: string[], options: {
   process.exit(exitCode);
 }
 
+async function decryptCommand(options: {
+  key?: string;
+  provider?: string;
+  password?: string;
+  cache?: boolean;
+  cacheTimeout?: string;
+  restore?: boolean;
+  output?: string;
+}) {
+  const config = loadConfig();
+  
+  // Determine provider
+  const providerName = options.provider || config.provider || 'password';
+  const provider = providerName === 'password' 
+    ? getDefaultProvider() 
+    : getProvider(providerName);
+
+  // Load encrypted key
+  const keyPath = options.key || '.env.keys.encrypted';
+  let encryptedKeyContent: string;
+  
+  try {
+    encryptedKeyContent = readFileSync(keyPath, 'utf-8').trim();
+  } catch (error) {
+    throw new Error(`Failed to read encrypted key file: ${keyPath}. ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+
+  if (!encryptedKeyContent) {
+    throw new Error('Encrypted key file is empty');
+  }
+
+  // Extract the encrypted data from the file
+  // Handle multiple formats:
+  // - New format: VHSM_PRIVATE_KEY=encrypted:...
+  // - Legacy format: ENCAPSULATED_KEY=encrypted:...
+  // - Old format: raw encrypted data (salt:iv:tag:encryptedData)
+  let encryptedKey: string;
+  if (encryptedKeyContent.startsWith('VHSM_PRIVATE_KEY=encrypted:')) {
+    // New format: extract the encrypted part after "encrypted:"
+    encryptedKey = encryptedKeyContent.substring('VHSM_PRIVATE_KEY=encrypted:'.length);
+  } else if (encryptedKeyContent.startsWith('ENCAPSULATED_KEY=encrypted:')) {
+    // Legacy format: extract the encrypted part after "encrypted:"
+    encryptedKey = encryptedKeyContent.substring('ENCAPSULATED_KEY=encrypted:'.length);
+  } else {
+    // Old format: use the content as-is
+    encryptedKey = encryptedKeyContent;
+  }
+
+  // Check cache
+  const keyId = createKeyId(encryptedKey);
+  const enableCache = options.cache !== false && (config.enableCache !== false);
+  const cacheTimeout = options.cacheTimeout 
+    ? parseInt(options.cacheTimeout, 10) 
+    : (config.cacheTimeout || 3600000);
+
+  let decryptedKey: string | null = null;
+
+  if (enableCache) {
+    globalCache.cleanup();
+    decryptedKey = globalCache.get(keyId);
+  }
+
+  // Decrypt if not cached
+  if (!decryptedKey) {
+    try {
+      // Pass password to provider if provided
+      if (options.password && provider.name === 'password') {
+        decryptedKey = await (provider as any).decrypt(encryptedKey, options.password);
+      } else {
+        decryptedKey = await provider.decrypt(encryptedKey);
+      }
+      
+      // Extract just the DOTENV_PRIVATE_KEY value if the decrypted content is the full file
+      // This handles both old format (full file) and new format (just the key value)
+      if (decryptedKey && decryptedKey.includes('DOTENV_PRIVATE_KEY=')) {
+        const lines = decryptedKey.split('\n');
+        const keyLine = lines.find(line => line.trim().startsWith('DOTENV_PRIVATE_KEY='));
+        if (keyLine) {
+          const keyValue = keyLine.split('=').slice(1).join('=').trim();
+          if (keyValue) {
+            decryptedKey = keyValue;
+          }
+        }
+      }
+      
+      // Cache the decrypted key
+      if (enableCache && decryptedKey) {
+        globalCache.set(keyId, decryptedKey, cacheTimeout);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'DecryptionError') {
+        throw error;
+      }
+      throw new Error('Failed to decrypt private key');
+    }
+  }
+
+  if (!decryptedKey) {
+    throw new Error('Failed to obtain decrypted key');
+  }
+
+  // If --restore is specified, write the key to a file
+  if (options.restore) {
+    const outputPath = options.output || '.env.keys';
+    const { writeFileSync } = await import('node:fs');
+    
+    // Format as .env.keys file with header comments
+    const keysFileContent = `#/------------------!DOTENV_PRIVATE_KEYS!-------------------/
+#/ private decryption keys. DO NOT commit to source control /
+#/     [how it works](https://dotenvx.com/encryption)       /
+#/----------------------------------------------------------/
+
+# .env
+DOTENV_PRIVATE_KEY=${decryptedKey}
+`;
+
+    writeFileSync(outputPath, keysFileContent, { mode: 0o600 });
+    console.log(`✅ Restored key to: ${outputPath}`);
+  }
+
+  // Prepare environment with decrypted key
+  const env = {
+    ...process.env,
+    DOTENV_PRIVATE_KEY: decryptedKey,
+  };
+
+  // Spawn dotenvx decrypt
+  const child = spawn('dotenvx', ['decrypt'], {
+    stdio: 'inherit',
+    env,
+    shell: process.platform === 'win32',
+  });
+
+  // Wait for child process to exit
+  const exitCode = await new Promise<number>((resolve) => {
+    child.on('exit', (code) => {
+      resolve(code ?? 0);
+    });
+    
+    child.on('error', (error) => {
+      console.error(`Failed to spawn dotenvx: ${error.message}`);
+      resolve(1);
+    });
+  });
+
+  process.exit(exitCode);
+}
+
 async function encryptKey(keyFile: string, outputPath: string, providedPassword?: string, shouldDelete: boolean = true) {
   const { encryptKeyWithPassword } = await import('./providers/password.js');
   const inquirer = (await import('inquirer')).default;
+
+  // Step 1: Run dotenvx encrypt first to generate/update .env.keys
+  console.log('Running dotenvx encrypt...');
+  const dotenvxEncrypt = spawn('dotenvx', ['encrypt'], {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
+
+  const encryptExitCode = await new Promise<number>((resolve) => {
+    dotenvxEncrypt.on('exit', (code) => {
+      resolve(code ?? 0);
+    });
+    
+    dotenvxEncrypt.on('error', (error) => {
+      console.error(`Failed to run dotenvx encrypt: ${error.message}`);
+      resolve(1);
+    });
+  });
+
+  if (encryptExitCode !== 0) {
+    throw new Error('dotenvx encrypt failed. Please ensure dotenvx is installed and you have a .env file to encrypt.');
+  }
+
+  // Step 2: Check if encrypted file already exists
+  if (existsSync(outputPath)) {
+    console.log(`Encrypted file ${outputPath} already exists. Attempting to decrypt to verify...`);
+    
+    // Try to decrypt the existing encrypted file
+    try {
+      const { getDefaultProvider } = await import('./providers/index.js');
+      const provider = getDefaultProvider();
+      
+      const encryptedContent = readFileSync(outputPath, 'utf-8').trim();
+      
+      // Extract encrypted data
+      let encryptedKey: string;
+      if (encryptedContent.startsWith('VHSM_PRIVATE_KEY=encrypted:')) {
+        encryptedKey = encryptedContent.substring('VHSM_PRIVATE_KEY=encrypted:'.length);
+      } else if (encryptedContent.startsWith('ENCAPSULATED_KEY=encrypted:')) {
+        encryptedKey = encryptedContent.substring('ENCAPSULATED_KEY=encrypted:'.length);
+      } else {
+        encryptedKey = encryptedContent;
+      }
+
+      // Attempt decryption (will prompt for password if not provided)
+      if (providedPassword) {
+        await (provider as any).decrypt(encryptedKey, providedPassword);
+      } else {
+        await provider.decrypt(encryptedKey);
+      }
+      
+      console.log('✅ Encrypted file verified. Skipping encryption.');
+      return;
+    } catch (error) {
+      console.log('⚠️  Could not decrypt existing file. Will re-encrypt...');
+      // Continue to encryption below
+    }
+  }
+
+  // Step 3: Encrypt the keys file if it exists
+  if (!existsSync(keyFile)) {
+    throw new Error(`Missing keys file: ${keyFile}. dotenvx encrypt should have created it.`);
+  }
 
   // Read plaintext key file
   let keyFileContent: string;
@@ -271,8 +506,8 @@ async function encryptKey(keyFile: string, outputPath: string, providedPassword?
   // Encrypt
   const encrypted = encryptKeyWithPassword(plaintextKey, password);
 
-  // Format as ENCAPSULATED_KEY=encrypted:...
-  const encapsulatedKey = `ENCAPSULATED_KEY=encrypted:${encrypted}`;
+  // Format as VHSM_PRIVATE_KEY=encrypted:...
+  const encapsulatedKey = `VHSM_PRIVATE_KEY=encrypted:${encrypted}`;
 
   // Write to file
   const { writeFileSync, unlinkSync } = await import('node:fs');

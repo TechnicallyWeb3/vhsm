@@ -67,6 +67,10 @@ export class PasswordProvider implements KeyDecryptionProvider {
       // Note: JavaScript strings are immutable, so we can't actually clear them from memory
       // The password will be garbage collected when it goes out of scope
       // This is a limitation of JavaScript's memory model
+      // Clear password from memory (best effort)
+      // password.split('').forEach((_: string, i: number) => {
+      //   (password as any)[i] = '\0';
+      // });
 
       return decrypted.toString('utf-8');
     } catch (error) {
