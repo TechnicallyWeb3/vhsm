@@ -1,0 +1,9 @@
+node_modules
+dist
+*.log
+.env*
+.git
+.DS_Store
+test-app/node_modules
+test-app/.env*
+

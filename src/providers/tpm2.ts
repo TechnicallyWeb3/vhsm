@@ -13,7 +13,9 @@ import { DecryptionError } from '../types.js';
  * 
  * Prerequisites:
  * - TPM 2.0 hardware chip (most modern computers have this)
- * - tpm2-tools installed (Windows: choco install tpm2-tools, Linux: apt install tpm2-tools)
+ * - tpm2-tools installed (Linux: sudo apt install tpm2-tools, macOS: brew install tpm2-tools)
+ * 
+ * Note: tpm2-tools is Linux/macOS only. For Windows testing, use Docker with a Linux container.
  */
 export class TPM2Provider implements KeyDecryptionProvider {
   readonly name = 'tpm2';
@@ -26,9 +28,9 @@ export class TPM2Provider implements KeyDecryptionProvider {
     if (!this.isTPM2Available()) {
       throw new Error(
         'TPM2 tools not found. Install tpm2-tools:\n' +
-        '  Windows: choco install tpm2-tools\n' +
         '  Linux: sudo apt install tpm2-tools\n' +
-        '  macOS: brew install tpm2-tools (requires virtual TPM)'
+        '  macOS: brew install tpm2-tools (requires virtual TPM)\n' +
+        '  Windows: Use Docker with Linux container (see test-app/DOCKER.md)'
       );
     }
 

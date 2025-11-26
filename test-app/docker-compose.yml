@@ -1,0 +1,20 @@
+services:
+  vhsm-test:
+    build:
+      context: ..
+      dockerfile: test-app/Dockerfile
+    container_name: vhsm-test-app
+    volumes:
+      # Mount test-app directory for development
+      - ../test-app:/app/test-app
+      # Mount TPM device if available (uncomment for hardware TPM)
+      # - /dev/tpm0:/dev/tpm0
+    environment:
+      - NODE_ENV=development
+    # Use software TPM for testing (swtpm)
+    # For hardware TPM, remove this and uncomment the device mount above
+    # Note: swtpm requires additional setup - see DOCKER.md
+    stdin_open: true
+    tty: true
+    working_dir: /app/test-app
+
