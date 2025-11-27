@@ -1,22 +1,24 @@
-# FIDO2/Yubikey Encryption Provider Guide
+# FIDO2 Encryption Provider Guide
 
-This guide walks you through using FIDO2/Yubikey as an encryption provider for VHSM.
+This guide walks you through using FIDO2 as an encryption provider for VHSM.
 
 ## Overview
 
-The FIDO2 provider uses your Yubikey (or other FIDO2-compatible security key) to protect your dotenvx private keys. This provides hardware-backed security with the following benefits:
+The FIDO2 provider uses FIDO2/WebAuthn authentication to protect your dotenvx private keys. This provides hardware-backed security with the following benefits:
 
-- **Hardware Security**: Keys are derived from FIDO2 credentials stored on your security key
-- **User Presence Required**: Physical touch is required for decryption
+- **Hardware Security**: Keys are derived from FIDO2 credentials
+- **User Presence Required**: Authentication required for decryption (PIN, biometric, touch, etc.)
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 - **No Password**: No password to remember or forget
+- **Multiple Options**: Supports Windows Hello, hardware security keys, and mobile authenticators
 
 ## Requirements
 
-1. **FIDO2-Compatible Device**
-   - Yubikey 5 series (recommended)
-   - Yubikey Security Key series
-   - Any other FIDO2/WebAuthn compatible security key
+1. **FIDO2-Compatible Authenticator**
+   - **Windows Hello**: Built-in PIN, fingerprint, or facial recognition (Windows 10/11)
+   - **Hardware Security Keys**: YubiKey, Titan Security Key, or any FIDO2-compatible key
+   - **Mobile Authenticators**: Face ID, fingerprint via QR code on iPhone/Android
+   - Any FIDO2/WebAuthn compatible authenticator
 
 2. **Web Browser**
    - Chrome, Edge, Firefox, Safari, or any modern browser
@@ -29,14 +31,14 @@ The FIDO2 provider uses your Yubikey (or other FIDO2-compatible security key) to
 
 1. **Encryption**: When you encrypt your keys, the provider:
    - Opens a browser window
-   - Creates a FIDO2 credential on your Yubikey
+   - Creates a FIDO2 credential using your authenticator (Windows Hello, security key, mobile, etc.)
    - Derives an encryption key from the credential
    - Encrypts your private key with AES-256-GCM
    - Stores the credential ID with the encrypted data
 
 2. **Decryption**: When you decrypt your keys, the provider:
    - Opens a browser window
-   - Authenticates with your Yubikey using the credential ID
+   - Authenticates using the same FIDO2 authenticator (Windows Hello, security key, mobile, etc.)
    - Derives the same encryption key
    - Decrypts your private key
 

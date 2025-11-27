@@ -24,16 +24,16 @@ vhsm encrypt
 # Windows DPAPI (machine/user bound)
 vhsm encrypt -p dpapi
 
-# FIDO2 / Yubikey (hardware-backed)
+# FIDO2 (hardware-backed - Windows Hello, security keys, mobile)
 vhsm encrypt -p fido2
 
 # Custom paths still work with any provider
-vhsm encrypt -p fido2 -fk .env.keys -o .env.keys.encrypted
+vhsm encrypt -p fido2 -fk .env.secure -o .env.vhsm
 ```
 
 - **password** prompts for an 8+ character passphrase.
 - **dpapi** never prompts and ties secrets to your Windows account.
-- **fido2** launches a browser flow where you tap your Yubikey once (credential is reused for multiple keys).
+- **fido2** launches a browser flow for FIDO2 authentication (Windows Hello, security keys, mobile - credential is reused for multiple keys).
 
 All providers output `VHSM_PRIVATE_KEY=<provider>:...` lines to `.env.keys.encrypted` (mode 600). Delete `.env.keys` unless passing `-nd`.
 
@@ -46,12 +46,7 @@ Replace `dotenvx run` with `vhsm run`:
 dotenvx run npm start
 
 # After (secure - key encrypted, decrypted at runtime)
-vhsm run npm start
-
-# Force a specific provider for this run
-vhsm run -p password npm start
-vhsm run -p dpapi npm start      # Windows-only
-vhsm run -p fido2 npm start      # Opens browser for Yubikey touch
+vhsm run -- npm start    # Provider auto-detected
 ```
 
 ### 4. Add to .gitignore
@@ -70,7 +65,7 @@ If you need to restore the `.env.keys` file from the encrypted version:
 ```bash
 vhsm decrypt --restore
 # or with custom paths
-vhsm decrypt -ef .env.keys.encrypted -r -fk .env.keys
+vhsm decrypt -ef .env.vhsm -r -fk .env.secure
 ```
 
 ## Advanced Usage
@@ -78,7 +73,7 @@ vhsm decrypt -ef .env.keys.encrypted -r -fk .env.keys
 ### Custom Key Path
 
 ```bash
-vhsm run -ef .secrets/dotenvx.key.encrypted npm start
+vhsm run -ef .secrets/dotenvx.key.encrypted -- npm start
 ```
 
 ### Disable Caching
@@ -86,9 +81,9 @@ vhsm run -ef .secrets/dotenvx.key.encrypted npm start
 For maximum security, disable session caching:
 
 ```bash
-vhsm run -nc npm start
+vhsm run --no-cache -- npm start
 # or
-vhsm run --no-cache npm start
+vhsm run -nc -- npm start
 ```
 
 ### Custom Cache Timeout
@@ -96,9 +91,9 @@ vhsm run --no-cache npm start
 Set cache to expire after 30 minutes:
 
 ```bash
-vhsm run -ct 1800000 npm start
+vhsm run --cache-timeout 1800000 -- npm start
 # or
-vhsm run --cache-timeout 1800000 npm start
+vhsm run -ct 1800000 -- npm start
 ```
 
 ### Running Complex Commands
@@ -116,9 +111,9 @@ Update your `package.json`:
 ```json
 {
   "scripts": {
-    "start": "vhsm run node server.js",
-    "dev": "vhsm run nodemon server.js",
-    "test": "vhsm run jest"
+    "start": "vhsm run -- node server.js",
+    "dev": "vhsm run -- nodemon server.js",
+    "test": "vhsm run -- jest"
   }
 }
 ```
@@ -162,13 +157,13 @@ vhsm run npm start
 vhsm run npm start
 
 # Override cache timeout for this command
-vhsm run -ct 600000 npm start
+vhsm run -ct 600000 -- npm start
 
 # Disable cache for this command
 vhsm run -nc npm start
 
 # Use custom encrypted key file
-vhsm run -ef custom/path/.env.keys.encrypted npm start
+vhsm run -ef custom/path/.env.keys.encrypted -- npm start
 ```
 
 ## Security Scenarios
@@ -251,7 +246,7 @@ vhsm decrypt -f .env.production
 ls -la .env.keys.encrypted
 
 # Use custom path
-vhsm run -k /path/to/key.encrypted npm start
+vhsm run -ef /path/to/key.encrypted -- npm start
 ```
 
 ### Wrong Passphrase
@@ -269,8 +264,8 @@ vhsm run npm start
 npm install -g @dotenvx/dotenvx
 
 # Or use npx
-vhsm run -- npx dotenvx run npm start  # Note: This won't work as expected
-# Better: ensure dotenvx is in PATH
+vhsm run -- npm start  # vhsm already includes dotenvx, no need to call it separately
+# Better: vhsm includes dotenvx, no PATH needed
 ```
 
 ## Integration Examples
@@ -298,7 +293,7 @@ start:
 
 .PHONY: test
 test:
-	vhsm run npm test
+	vhsm run -- npm test
 ```
 
 ### With Shell Scripts

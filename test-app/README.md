@@ -11,13 +11,13 @@ cd test-app
 npm install
 ```
 
-### 2. Install dotenvx (if not already installed)
+### 2. Install vhsm (includes dotenvx)
 
 ```bash
-npm install -g @dotenvx/dotenvx
-# or
-npm install --save-dev @dotenvx/dotenvx
+npm install -g vhsm
 ```
+
+No need to install dotenvx separately - vhsm includes it as a dependency.
 
 ### 3. Generate dotenvx Key
 
@@ -35,13 +35,13 @@ From the project root (not test-app), encrypt the key with your preferred provid
 
 ```bash
 # Password (default)
-vhsm encrypt -fk test-app/.env.keys -o test-app/.env.keys.encrypted
+vhsm encrypt
 
 # Windows DPAPI (no passphrase prompts)
-vhsm encrypt -p dpapi -fk test-app/.env.keys -o test-app/.env.keys.encrypted
+vhsm encrypt -p dpapi
 
-# FIDO2 / Yubikey (browser flow)
-vhsm encrypt -p fido2 -fk test-app/.env.keys -o test-app/.env.keys.encrypted
+# FIDO2 (Windows Hello, security keys, mobile - browser flow)
+vhsm encrypt -p fido2
 ```
 
 For password provider, you'll be prompted for a passphrase. DPAPI and FIDO2 flows take care of the protection automatically.
@@ -68,28 +68,56 @@ Add to `.gitignore`:
 From the project root:
 
 ```bash
-# Run the server (uses default provider)
-vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
-
-# Force DPAPI or FIDO2 explicitly
-vhsm run -p dpapi -ef test-app/.env.keys.encrypted -- node test-app/server.js
-vhsm run -p fido2 -ef test-app/.env.keys.encrypted -- node test-app/server.js
+# Run the server (auto-detects provider from encrypted file)
+vhsm run -- node test-app/server.js
 
 # Or use npm script (if configured)
 cd test-app
-vhsm run -p fido2 -k .env.keys.encrypted -- npm start
+vhsm run -- npm start
 ```
+
+Or add it to your npm scripts in package.json:
+
+```json
+// package.json scripts example:
+// In your app's package.json, add scripts like:
+{
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node demo.js",
+    "test-env": "node test-env.js",
+    "secure": "vhsm run -- node server.js"
+  }
+}
+```
+
+You can then run your app securely using npm scripts like these:
+
+```bash
+# This will run server.js with secure key decryption via vhsm:
+npm run secure
+
+# Or you can use vhsm run to wrap any script:
+vhsm run -- npm run start
+vhsm run -- npm run demo
+vhsm run -- npm run test-env
+```
+
+> **Tip:** If you want all developers to run securely by default, just replace the `start` script in `package.json` with the `vhsm run -- node server.js` command.
+
+```
+
 
 ### Test Environment Variables
 
 ```bash
-vhsm run -k test-app/.env.keys.encrypted -- node test-app/test-env.js
+vhsm run -ef test-app/.env.keys.encrypted -- node test-app/test-env.js
 ```
 
 ### Run Demo
 
 ```bash
-vhsm run -k test-app/.env.keys.encrypted -- node test-app/demo.js
+vhsm run -ef test-app/.env.keys.encrypted -- node test-app/demo.js
 ```
 
 ## Workflow Demonstration
@@ -106,7 +134,7 @@ vhsm run -k test-app/.env.keys.encrypted -- node test-app/demo.js
    vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
    ```
 
-3. **Run again** (cached - no prompt):
+3. **Run again** (cached - may still need authentication depending on provider):
    ```bash
    vhsm run -ef test-app/.env.keys.encrypted -- node test-app/server.js
    ```
@@ -129,9 +157,9 @@ vhsm run -k test-app/.env.keys.encrypted -- node test-app/demo.js
 
 ### "dotenvx: command not found"
 
-Install dotenvx:
+This shouldn't happen as vhsm includes dotenvx. If you see this:
 ```bash
-npm install -g @dotenvx/dotenvx
+npm install -g vhsm
 ```
 
 ### "Failed to read encrypted key file"

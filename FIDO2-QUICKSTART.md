@@ -1,18 +1,26 @@
-# FIDO2/Yubikey Quick Start Guide
+# FIDO2 Quick Start Guide
 
 ## What We've Added
 
-✅ FIDO2 provider for Yubikey authentication
+✅ FIDO2 provider for hardware-backed authentication
 ✅ Browser-based WebAuthn integration
 ✅ AES-256-GCM encryption using FIDO2-derived keys
 ✅ Auto-registration and authentication flows
 ✅ Test script to verify functionality
 
+## Supported FIDO2 Authenticators
+
+- **Windows Hello**: PIN, fingerprint, or facial recognition (no additional hardware needed)
+- **Hardware Security Keys**: YubiKey, Titan Security Key, or any FIDO2-compatible key
+- **Mobile Authenticators**: Face ID, fingerprint via QR code on iPhone/Android
+
 ## Test Your Setup
 
-### Step 1: Plug in Your Yubikey
+### Step 1: Ensure FIDO2 Authenticator is Available
 
-Make sure your Yubikey is connected to your computer.
+- **Windows Hello**: Set up in Windows Settings → Accounts → Sign-in options
+- **Security Key**: Plug in your hardware key (YubiKey, etc.)
+- **Mobile**: Have your phone ready with biometric authentication enabled
 
 ### Step 2: Run the Test Script
 
@@ -22,16 +30,16 @@ node test-fido2.js
 
 This will:
 1. Open a browser window on `http://localhost:8765`
-2. Ask you to click "Register Yubikey"
-3. Your Yubikey will blink - **touch it**
+2. Ask you to click "Register" button
+3. Authenticate using your FIDO2 method (Windows Hello PIN/biometric, touch security key, mobile Face ID, etc.)
 4. Encrypt a test string
 5. Open another browser window
-6. Ask you to authenticate - **touch your Yubikey again**
+6. Ask you to authenticate again using the same method
 7. Decrypt and verify the string
 
 **Expected flow:**
 ```
-=== FIDO2/Yubikey Provider Test ===
+=== FIDO2 Provider Test ===
 
 FIDO2 Available: true
 
@@ -51,9 +59,9 @@ A browser window will open. Please follow the instructions.
 Waiting 2 seconds before decryption...
 
 Decrypting with FIDO2...
-A browser window will open. Please touch your Yubikey when prompted.
+A browser window will open. Please authenticate when prompted.
 
-🔑 Please touch your Yubikey to decrypt...
+🔑 Please authenticate with your FIDO2 device...
 🌐 Opening browser for authentication...
 
 ✅ Decrypted: dotenvx_private_key_1234567890abcdef
@@ -90,20 +98,20 @@ vhsm encrypt -p fido2
 
 **What happens:**
 - Browser opens
-- Click "Register Yubikey"
-- Touch your Yubikey when it blinks
+- Click "Register" button
+- Authenticate using your FIDO2 method (Windows Hello, security key touch, mobile Face ID, etc.)
 - Keys are encrypted with format: `fido2:credentialId:iv:authTag:data`
 
 ### Run Your App with FIDO2 Decryption
 
 ```bash
 cd test-app
-vhsm run -p fido2 -- node index.js
+vhsm run -- node index.js
 ```
 
 **What happens:**
 - Browser opens automatically
-- Touch your Yubikey when it blinks
+- Authenticate using your FIDO2 method (Windows Hello, security key touch, mobile Face ID, etc.)
 - Keys are decrypted in memory
 - Your app runs with decrypted environment variables
 
@@ -111,13 +119,13 @@ vhsm run -p fido2 -- node index.js
 
 ```bash
 cd test-app
-vhsm decrypt -p fido2
+vhsm decrypt
 ```
 
 Or restore to file:
 
 ```bash
-vhsm decrypt -p fido2 --restore
+vhsm decrypt --restore
 ```
 
 ## Architecture Overview
@@ -142,8 +150,10 @@ vhsm decrypt -p fido2 --restore
          │                        │
          │                        ▼
          │               ┌──────────────────┐
-         │               │    Yubikey       │
-         │               │  (FIDO2 Device)  │
+         │               │  FIDO2 Device   │
+         │               │ (Windows Hello, │
+         │               │ Security Key,   │
+         │               │  Mobile, etc.)   │
          │               └────────┬─────────┘
          │                        │
          ▼                        ▼
@@ -166,7 +176,7 @@ vhsm decrypt -p fido2 --restore
 1. **Credential Creation**
    - Opens browser to `localhost:8765`
    - Uses WebAuthn API to create new credential
-   - Credential is stored on your Yubikey
+   - Credential is stored on your FIDO2 authenticator
    - Returns credential ID
 
 2. **Key Derivation**
@@ -187,7 +197,7 @@ vhsm decrypt -p fido2 --restore
 2. **Authentication**
    - Opens browser to `localhost:8765`
    - Uses WebAuthn API to authenticate with credential ID
-   - Requires physical touch of Yubikey
+   - Requires authentication (PIN, biometric, touch, etc.)
    - Derives same encryption key
 
 3. **Data Decryption**
@@ -200,7 +210,7 @@ vhsm decrypt -p fido2 --restore
 ### What's Protected ✅
 
 - Private keys are encrypted with AES-256-GCM
-- Decryption requires physical Yubikey presence
+- Decryption requires FIDO2 authenticator presence
 - User must touch device (proof of presence)
 - Encryption key is derived, never stored
 - Session cache is memory-only
@@ -211,15 +221,15 @@ vhsm decrypt -p fido2 --restore
 |--------------|------------|-------|
 | Malware reading files | ✅ Yes | Files are encrypted |
 | Malware reading memory | ⚠️ Partial | Only during active use |
-| Physical theft of Yubikey | ❌ No | Physical possession = access |
+| Physical theft of authenticator | ❌ No | Physical possession = access |
 | Remote attacker | ✅ Yes | Requires physical device |
 | Phishing | ⚠️ Depends | WebAuthn origin binding helps |
 | Shoulder surfing | ✅ Yes | No password to see |
 
 ### Best Practices
 
-1. **Physical Security**: Keep your Yubikey secure
-2. **Backup Keys**: Register multiple Yubikeys for redundancy
+1. **Physical Security**: Keep your FIDO2 authenticator secure
+2. **Backup Authenticators**: Register multiple authenticators for redundancy (e.g., Windows Hello + security key)
 3. **Don't Commit**: Never commit `.env.keys.encrypted` to git
 4. **Verify Origin**: Only authenticate on `localhost:8765`
 5. **Use Cache Wisely**: Default 1-hour cache is good for dev
@@ -232,7 +242,7 @@ vhsm decrypt -p fido2 --restore
 
 **Solution**: Manually navigate to `http://localhost:8765`
 
-### Yubikey not detected
+### FIDO2 authenticator not detected
 
 **Symptoms**: 
 - "No authenticator found"
@@ -240,11 +250,12 @@ vhsm decrypt -p fido2 --restore
 - Browser says "SecurityError"
 
 **Solutions**:
-1. Check Yubikey is plugged in firmly
-2. Try different USB port
-3. Close other apps using Yubikey (YubiKey Manager, etc.)
-4. Try different browser (Chrome/Edge recommended)
-5. Restart browser
+1. **For security keys**: Check device is plugged in firmly, try different USB port
+2. **For Windows Hello**: Ensure it's set up in Windows Settings → Accounts → Sign-in options
+3. **For mobile**: Ensure your phone has biometric authentication enabled
+4. Close other apps using the authenticator
+5. Try different browser (Chrome/Edge recommended)
+6. Restart browser
 
 ### Port 8765 already in use
 
@@ -277,12 +288,15 @@ vhsm encrypt -p fido2                # Re-encrypt with FIDO2
 
 **Symptom**: Works on one machine but not another
 
-**Reason**: FIDO2 credentials are bound to the Yubikey, not the machine
+**Reason**: FIDO2 credentials are bound to the authenticator, not the machine
 
 **Solution**: 
-- You MUST use the SAME Yubikey that encrypted the data
-- The credential is stored on the Yubikey itself
-- Different machines are OK, different Yubikeys are NOT
+- You MUST use the SAME authenticator that encrypted the data
+- The credential is stored on the authenticator itself
+- Different machines are OK, different authenticators are NOT
+- For Windows Hello: Must be same Windows account
+- For security keys: Must be same physical key
+- For mobile: Must be same device/account
 
 ## Files Created
 
@@ -313,7 +327,7 @@ secenv/
 
 - ✅ Works: Windows, macOS, Linux
 - ✅ Tested: Chrome, Edge, Firefox, Safari
-- ✅ Devices: Yubikey 5 series, Security Key series
+- ✅ Devices: Windows Hello, YubiKey, Titan Security Key, mobile authenticators, any FIDO2-compatible device
 - ⚠️ Requires: Graphical environment (not SSH without X11)
 - ❌ Not for: CI/CD, Docker, headless servers
 
