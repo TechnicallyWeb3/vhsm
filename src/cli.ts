@@ -547,22 +547,55 @@ async function decryptCommand(options: {
   // If --restore is specified, write the keys to a file
   if (options.restore) {
     const outputPath = options.envKeysFile || '.env.keys';
-    const { writeFileSync } = await import('node:fs');
+    const { writeFileSync, readFileSync, existsSync } = await import('node:fs');
     
-    // Format as .env.keys file with header comments
-    let keysFileContent = `#/------------------!DOTENV_PRIVATE_KEYS!-------------------/
+    let keysFileContent = '';
+    const existingKeys = new Set<string>();
+    
+    // Check if file exists and read existing content
+    if (existsSync(outputPath)) {
+      const existingContent = readFileSync(outputPath, 'utf-8');
+      keysFileContent = existingContent;
+      
+      // Extract existing key names to avoid duplicates
+      const lines = existingContent.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('DOTENV_PRIVATE_KEY') && trimmed.includes('=')) {
+          const keyName = trimmed.split('=')[0].trim();
+          existingKeys.add(keyName);
+        }
+      }
+      
+      // Add a separator if file doesn't end with newline
+      if (!keysFileContent.endsWith('\n')) {
+        keysFileContent += '\n';
+      }
+    } else {
+      // File doesn't exist - create with header
+      keysFileContent = `#/------------------!DOTENV_PRIVATE_KEYS!-------------------/
 #/ private decryption keys. DO NOT commit to source control /
 #/     [how it works](https://dotenvx.com/encryption)       /
 #/----------------------------------------------------------/
 `;
+    }
 
+    // Append new keys (skip if they already exist)
+    let addedCount = 0;
     for (const key of decryptedKeys) {
-      keysFileContent += `\n# ${key.envFile}\n`;
-      keysFileContent += `${key.dotenvKey}=${key.decryptedValue}\n`;
+      if (!existingKeys.has(key.dotenvKey)) {
+        keysFileContent += `\n# ${key.envFile}\n`;
+        keysFileContent += `${key.dotenvKey}=${key.decryptedValue}\n`;
+        addedCount++;
+      }
     }
 
     writeFileSync(outputPath, keysFileContent, { mode: 0o600 });
-    console.log(`✅ Restored keys to: ${outputPath}`);
+    if (addedCount > 0) {
+      console.log(`✅ Restored ${addedCount} key(s) to: ${outputPath}`);
+    } else {
+      console.log(`✅ All keys already exist in: ${outputPath}`);
+    }
   }
 
   // Prepare environment with decrypted keys
@@ -649,7 +682,39 @@ async function encryptKey(
     console.warn('⚠️  Password parameter is ignored when using DPAPI provider');
   }
 
-  // Step 1: Run dotenvx encrypt first to generate/update .env.keys
+  // Step 1: Check if encrypted file already exists and verify provider match BEFORE running dotenvx
+  let existingEncryptedContent: string | null = null;
+  let existingKeys: Array<{ vhsmKey: string; encryptedValue: string; provider: string }> = [];
+  
+  if (existsSync(outputPath)) {
+    existingEncryptedContent = readFileSync(outputPath, 'utf-8').trim();
+    existingKeys = parseEncryptedKeys(existingEncryptedContent);
+    
+    if (existingKeys.length > 0) {
+      // Check if any existing keys use a different provider
+      const existingProviders = new Set(existingKeys.map(k => k.provider));
+      const uniqueProviders = Array.from(existingProviders);
+      
+      // If there's a provider mismatch, show helpful error and fail early
+      if (uniqueProviders.length > 0 && !uniqueProviders.includes(providerName)) {
+        const currentProvider = uniqueProviders[0]; // Use first provider found
+        const currentProviderDisplay = currentProvider === 'password' ? 'password (encrypted:)' : currentProvider;
+        
+        console.error(`\n❌ Provider mismatch detected!`);
+        console.error(`   Current encrypted keys use provider: ${currentProviderDisplay}`);
+        console.error(`   You requested provider: ${providerName}`);
+        console.error(`\n   To change providers, you must:`);
+        console.error(`   1. Decrypt the existing keys: vhsm decrypt --restore`);
+        console.error(`   2. Re-encrypt with the new provider: vhsm encrypt -p ${providerName}`);
+        console.error(`\n   Or use the correct provider:`);
+        console.error(`   vhsm encrypt -p ${currentProvider}\n`);
+        
+        throw new Error(`Cannot encrypt with provider '${providerName}'. Existing encrypted keys use provider '${currentProvider}'.`);
+      }
+    }
+  }
+
+  // Step 2: Run dotenvx encrypt to generate/update .env.keys
   console.log('Running dotenvx encrypt...');
   
   // Build dotenvx encrypt arguments
@@ -693,57 +758,6 @@ async function encryptKey(
     throw new Error('dotenvx encrypt failed. Please ensure dotenvx is installed and you have a .env file to encrypt.');
   }
 
-  // Step 2: Check if encrypted file already exists and verify provider match
-  if (existsSync(outputPath)) {
-    const encryptedContent = readFileSync(outputPath, 'utf-8').trim();
-    const existingKeys = parseEncryptedKeys(encryptedContent);
-    
-    if (existingKeys.length > 0) {
-      // Check if any existing keys use a different provider
-      const existingProviders = new Set(existingKeys.map(k => k.provider));
-      const uniqueProviders = Array.from(existingProviders);
-      
-      // If there's a provider mismatch, show helpful error
-      if (uniqueProviders.length > 0 && !uniqueProviders.includes(providerName)) {
-        const currentProvider = uniqueProviders[0]; // Use first provider found
-        const currentProviderDisplay = currentProvider === 'password' ? 'password (encrypted:)' : currentProvider;
-        
-        console.error(`\n❌ Provider mismatch detected!`);
-        console.error(`   Current encrypted keys use provider: ${currentProviderDisplay}`);
-        console.error(`   You requested provider: ${providerName}`);
-        console.error(`\n   To change providers, you must:`);
-        console.error(`   1. Decrypt the existing keys: vhsm decrypt --restore`);
-        console.error(`   2. Re-encrypt with the new provider: vhsm encrypt -p ${providerName}`);
-        console.error(`\n   Or use the correct provider:`);
-        console.error(`   vhsm encrypt -p ${currentProvider}\n`);
-        
-        throw new Error(`Cannot encrypt with provider '${providerName}'. Existing encrypted keys use provider '${currentProvider}'.`);
-      }
-      
-      // Provider matches - attempt to decrypt to verify
-      console.log(`Encrypted file ${outputPath} already exists. Attempting to decrypt to verify...`);
-      
-      try {
-        // Attempt decryption (will use the provider specified in each key)
-        for (const keyEntry of existingKeys) {
-          const provider = keyEntry.provider === 'password' ? getDefaultProvider() : getProvider(keyEntry.provider);
-          
-          if (providedPassword && (provider.name === 'password' || provider.name === 'tpm2')) {
-            await (provider as any).decrypt(keyEntry.encryptedValue, providedPassword);
-          } else {
-            await provider.decrypt(keyEntry.encryptedValue);
-          }
-        }
-        
-        console.log('✅ Encrypted file verified. Skipping encryption.');
-        return;
-      } catch (error) {
-        console.log('⚠️  Could not decrypt existing file. Will re-encrypt...');
-        // Continue to encryption below
-      }
-    }
-  }
-
   // Step 3: Encrypt the keys file if it exists
   if (!existsSync(keyFile)) {
     throw new Error(`Missing keys file: ${keyFile}. dotenvx encrypt should have created it.`);
@@ -769,12 +783,29 @@ async function encryptKey(
   // Extract the value after the = sign
   const keyKeys = keyLines.map(line => line.split('=')[0].trim());
   const keyValues = keyLines.map(line => line.split('=').slice(1).join('=').trim());
+  
+  // Convert DOTENV keys to VHSM keys to check against existing encrypted file
+  const vhsmKeysToEncrypt = keyKeys.map(k => k.replace('DOTENV_', 'VHSM_'));
 
   // Encrypt based on provider
-  let outputContent = `#/-----------------!VHSM_PRIVATE_KEYS!------------------/
+  // Start with existing encrypted content if it exists, otherwise create new header
+  let outputContent = existingEncryptedContent 
+    ? existingEncryptedContent.split('\n').filter(line => line.trim().startsWith('#')).join('\n') + '\n'
+    : `#/-----------------!VHSM_PRIVATE_KEYS!------------------/
 #/ VHSM encrypted keys. DO NOT commit to source control /
 #/------------------------------------------------------/
 `;
+  
+  // If we have existing keys, preserve them (unless we're re-encrypting the same key)
+  if (existingKeys.length > 0) {
+    const keysToReencrypt = new Set(vhsmKeysToEncrypt);
+    for (const existingKey of existingKeys) {
+      // Only preserve keys that we're NOT re-encrypting
+      if (!keysToReencrypt.has(existingKey.vhsmKey)) {
+        outputContent += `\n${existingKey.vhsmKey}=${existingKey.provider === 'password' ? 'encrypted:' : existingKey.provider + ':'}${existingKey.encryptedValue}`;
+      }
+    }
+  }
 
   if (providerName === 'dpapi') {
     // DPAPI encryption - no password needed
@@ -790,31 +821,52 @@ async function encryptKey(
     // FIDO2 encryption - requires Yubikey/FIDO2 device
     const { encryptKeyWithFIDO2 } = await import('./providers/fido2.js');
     
-    console.log('Encrypting keys with FIDO2/Yubikey...');
-    console.log(`Found ${keyValues.length} key(s) to encrypt.`);
-    console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
-    
-    // Encrypt first key to create the credential
+    // Check if there are existing FIDO2 keys we can reuse the credential from
     let credentialId: string | undefined;
+    const existingFido2Keys = existingKeys.filter(k => k.provider === 'fido2');
+    if (existingFido2Keys.length > 0) {
+      // Extract credential ID from first existing FIDO2 key (format: credId:iv:authTag:data)
+      credentialId = existingFido2Keys[0].encryptedValue.split(':')[0];
+      console.log('Encrypting keys with FIDO2/Yubikey...');
+      console.log(`Found existing FIDO2 credential. Reusing for new keys.`);
+    } else {
+      console.log('Encrypting keys with FIDO2/Yubikey...');
+      console.log(`Found ${keyValues.length} key(s) to encrypt.`);
+      console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
+    }
     
+    // Filter to only encrypt keys that don't already exist
+    const keysToEncrypt: Array<{ index: number; key: string; vhsmKey: string }> = [];
     for (const [i, key] of keyValues.entries()) {
-      if (i === 0) {
-        console.log(`Encrypting key ${i + 1}/${keyValues.length}: ${keyKeys[i]} (creating credential)...`);
-        const encrypted = await encryptKeyWithFIDO2(key);
-        // Extract credential ID from first encrypted key (format: credId:iv:authTag:data)
-        credentialId = encrypted.split(':')[0];
-        const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
-        outputContent += `\n${encapsulatedKey}`;
-      } else {
-        console.log(`Encrypting key ${i + 1}/${keyValues.length}: ${keyKeys[i]} (reusing credential)...`);
-        // Reuse the credential for remaining keys
-        const encrypted = await encryptKeyWithFIDO2(key, credentialId);
-        const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=fido2:${encrypted}`;
-        outputContent += `\n${encapsulatedKey}`;
+      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
+      if (!outputContent.includes(`${vhsmKey}=`)) {
+        keysToEncrypt.push({ index: i, key, vhsmKey });
       }
     }
     
-    console.log(`\n✅ All ${keyValues.length} key(s) encrypted with the same FIDO2 credential.`);
+    if (keysToEncrypt.length === 0) {
+      console.log('✅ All keys already encrypted. Skipping.');
+    } else {
+      for (const [idx, { index, key, vhsmKey }] of keysToEncrypt.entries()) {
+        if (credentialId === undefined) {
+          // First key and no existing credential - create new one
+          console.log(`Encrypting key ${index + 1}/${keyValues.length}: ${keyKeys[index]} (creating credential)...`);
+          const encrypted = await encryptKeyWithFIDO2(key);
+          // Extract credential ID from first encrypted key (format: credId:iv:authTag:data)
+          credentialId = encrypted.split(':')[0];
+          const encapsulatedKey = `${vhsmKey}=fido2:${encrypted}`;
+          outputContent += `\n${encapsulatedKey}`;
+        } else {
+          // Reuse existing credential
+          console.log(`Encrypting key ${index + 1}/${keyValues.length}: ${keyKeys[index]} (reusing existing credential)...`);
+          const encrypted = await encryptKeyWithFIDO2(key, credentialId);
+          const encapsulatedKey = `${vhsmKey}=fido2:${encrypted}`;
+          outputContent += `\n${encapsulatedKey}`;
+        }
+      }
+      
+      console.log(`\n✅ All ${keysToEncrypt.length} key(s) encrypted with the same FIDO2 credential.`);
+    }
   } else if (providerName === 'tpm2') {
     // TPM2 encryption - optional password for additional security
     const { encryptKeyWithTPM2 } = await import('./providers/tpm2.js');
@@ -874,9 +926,13 @@ async function encryptKey(
     }
 
     for (const [i, key] of keyValues.entries()) {
-      const encrypted = encryptKeyWithTPM2(key, password);
-      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=tpm2:${encrypted}`;
-      outputContent += `\n${encapsulatedKey}`;
+      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
+      // Only encrypt if this key doesn't already exist in the output
+      if (!outputContent.includes(`${vhsmKey}=`)) {
+        const encrypted = encryptKeyWithTPM2(key, password);
+        const encapsulatedKey = `${vhsmKey}=tpm2:${encrypted}`;
+        outputContent += `\n${encapsulatedKey}`;
+      }
     }
   } else if (providerName === 'password') {
     // Password-based encryption
@@ -922,9 +978,13 @@ async function encryptKey(
     }
 
     for (const [i, key] of keyValues.entries()) {
-      const encrypted = encryptKeyWithPassword(key, password);
-      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=encrypted:${encrypted}`;
-      outputContent += `\n${encapsulatedKey}`;
+      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
+      // Only encrypt if this key doesn't already exist in the output
+      if (!outputContent.includes(`${vhsmKey}=`)) {
+        const encrypted = encryptKeyWithPassword(key, password);
+        const encapsulatedKey = `${vhsmKey}=encrypted:${encrypted}`;
+        outputContent += `\n${encapsulatedKey}`;
+      }
     }
   } else {
     throw new Error(`Unsupported encryption provider: ${providerName}`);
