@@ -128,10 +128,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       let server: any;
       const connections = new Set<any>();
       let timeoutId: NodeJS.Timeout;
-      let heartbeatCheckInterval: NodeJS.Timeout | undefined;
       let pageLoaded = false;
       let authenticationStarted = false;
-      let lastHeartbeat = Date.now();
       
       // Generate registration options
       const registrationOptions = this.f2l.attestationOptions();
@@ -300,37 +298,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       setTimeout(() => window.close(), 1000);
     }, 120000);
     
-    // Heartbeat to keep server informed that browser is still open
-    let heartbeatInterval = setInterval(() => {
-      fetch('/heartbeat', { method: 'POST' }).catch(() => {
-        // Ignore errors - server might have closed
-      });
-    }, 2000); // Send heartbeat every 2 seconds
-    
-    // Send close signal when window is closing
-    window.addEventListener('beforeunload', () => {
-      clearInterval(heartbeatInterval);
-      // Use sendBeacon for reliable delivery even during page unload
-      navigator.sendBeacon('/close', '');
-    });
-    
-    // Also detect visibility change (tab switching/backgrounding)
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        // Tab is hidden - still send heartbeat but less frequently
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = setInterval(() => {
-          fetch('/heartbeat', { method: 'POST' }).catch(() => {});
-        }, 5000); // Slower heartbeat when hidden
-      } else {
-        // Tab is visible again - resume normal heartbeat
-        clearInterval(heartbeatInterval);
-        heartbeatInterval = setInterval(() => {
-          fetch('/heartbeat', { method: 'POST' }).catch(() => {});
-        }, 2000);
-      }
-    });
-    
     async function register() {
       const btn = document.getElementById('registerBtn');
       const status = document.getElementById('status');
@@ -388,7 +355,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         }
       } catch (error) {
         clearTimeout(timeoutCheck);
-        clearInterval(heartbeatInterval);
         icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
@@ -410,23 +376,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
             pageLoaded = true;
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
-          } else if (req.method === 'POST' && req.url === '/heartbeat') {
-            // Heartbeat from browser - update last heartbeat time
-            lastHeartbeat = Date.now();
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true }));
-          } else if (req.method === 'POST' && req.url === '/close') {
-            // Browser is closing - fail immediately
-            clearTimeout(timeoutId);
-            if (heartbeatCheckInterval) {
-              clearInterval(heartbeatCheckInterval);
-            }
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true }));
-            connections.forEach(conn => conn.destroy());
-            server.close(() => {
-              reject(new Error('Browser window was closed before authentication could complete'));
-            });
           } else if (req.method === 'POST' && req.url === '/register') {
             authenticationStarted = true;
             let body = '';
@@ -443,11 +392,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true }));
                 
-                // Clear the timeout and heartbeat check since we succeeded
+                // Clear the timeout since we succeeded
                 clearTimeout(timeoutId);
-                if (typeof heartbeatCheckInterval !== 'undefined') {
-                  clearInterval(heartbeatCheckInterval);
-                }
                 
                 // Close server and all connections
                 // Small delay to ensure response is sent before destroying connections
@@ -506,9 +452,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 
         // Timeout after 2 minutes
         timeoutId = setTimeout(() => {
-          if (heartbeatCheckInterval) {
-            clearInterval(heartbeatCheckInterval);
-          }
           connections.forEach(conn => conn.destroy());
           server.close(() => {
             reject(new Error('Registration timeout - no response received'));
@@ -528,10 +471,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       let server: any;
       const connections = new Set<any>();
       let timeoutId: NodeJS.Timeout;
-      let heartbeatCheckInterval: NodeJS.Timeout | undefined;
       let pageLoaded = false;
       let authenticationStarted = false;
-      let lastHeartbeat = Date.now();
       
       // Generate authentication options
       const authOptions = this.f2l.assertionOptions();
@@ -730,7 +671,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         
         if (response.ok) {
           clearTimeout(timeoutCheck);
-          clearInterval(heartbeatInterval);
           icon.style.display = 'none';
           status.parentElement.className = 'status success';
           status.textContent = '✅ Success! You can close this window.';
@@ -740,7 +680,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         }
       } catch (error) {
         clearTimeout(timeoutCheck);
-        clearInterval(heartbeatInterval);
         icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
@@ -791,11 +730,8 @@ export class FIDO2Provider implements KeyDecryptionProvider {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true }));
                 
-                // Clear the timeout and heartbeat check since we succeeded
+                // Clear the timeout since we succeeded
                 clearTimeout(timeoutId);
-                if (heartbeatCheckInterval) {
-                  clearInterval(heartbeatCheckInterval);
-                }
                 
                 // Close server and all connections
                 // Small delay to ensure response is sent before destroying connections
@@ -806,9 +742,6 @@ export class FIDO2Provider implements KeyDecryptionProvider {
                   });
                 }, 100);
               } catch (error) {
-                if (heartbeatCheckInterval) {
-                  clearInterval(heartbeatCheckInterval);
-                }
                 res.writeHead(400);
                 res.end();
                 setTimeout(() => {
