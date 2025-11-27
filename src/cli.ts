@@ -678,8 +678,8 @@ async function encryptKey(
   }
   
   // DPAPI doesn't support password parameter
-  if (providerName === 'dpapi' && providedPassword) {
-    console.warn('⚠️  Password parameter is ignored when using DPAPI provider');
+  if (providerName !== 'password' && providedPassword) {
+    console.warn('⚠️  Password parameter is ignored when not using password provider');
   }
 
   // Step 1: Check if encrypted file already exists and verify provider match BEFORE running dotenvx

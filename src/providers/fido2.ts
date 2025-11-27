@@ -1,9 +1,14 @@
 import { createServer } from 'node:http';
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import type { KeyDecryptionProvider } from '../types.js';
 import { DecryptionError } from '../types.js';
 import { Fido2Lib } from 'fido2-lib';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../../package.json') as { version?: string };
+const VERSION = pkg.version || '0.0.0';
 
 /**
  * FIDO2/Yubikey key decryption provider
@@ -264,7 +269,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       <span class="logo">🔐</span>
       <h1>FIDO2 Registration</h1>
       <p class="subtitle">vHSM - Virtual Hardware Security Module</p>
-      <span class="version">v0.1.0</span>
+      <span class="version">v${VERSION}</span>
     </div>
     
     <div class="status">
@@ -281,6 +286,16 @@ export class FIDO2Provider implements KeyDecryptionProvider {
   </div>
   
   <script>
+    // Auto-close on timeout (2 minutes)
+    let timeoutCheck = setTimeout(() => {
+      const status = document.getElementById('status');
+      if (status) {
+        status.parentElement.className = 'status error';
+        status.textContent = '⏱️ Timeout - Closing window...';
+      }
+      setTimeout(() => window.close(), 1000);
+    }, 120000);
+    
     async function register() {
       const btn = document.getElementById('registerBtn');
       const status = document.getElementById('status');
@@ -328,6 +343,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
         
         if (response.ok) {
+          clearTimeout(timeoutCheck);
           icon.style.display = 'none';
           status.parentElement.className = 'status success';
           status.textContent = '✅ Success! You can close this window.';
@@ -336,6 +352,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
           throw new Error('Server rejected credential');
         }
       } catch (error) {
+        clearTimeout(timeoutCheck);
         icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
@@ -581,7 +598,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       <span class="logo">🔓</span>
       <h1>FIDO2 Authentication</h1>
       <p class="subtitle">vHSM - Virtual Hardware Security Module</p>
-      <span class="version">v0.1.0</span>
+      <span class="version">v${VERSION}</span>
     </div>
     
     <div class="status">
@@ -638,6 +655,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
         });
         
         if (response.ok) {
+          clearTimeout(timeoutCheck);
           icon.style.display = 'none';
           status.parentElement.className = 'status success';
           status.textContent = '✅ Success! You can close this window.';
@@ -646,12 +664,23 @@ export class FIDO2Provider implements KeyDecryptionProvider {
           throw new Error('Authentication failed');
         }
       } catch (error) {
+        clearTimeout(timeoutCheck);
         icon.style.display = 'none';
         status.parentElement.className = 'status error';
         status.textContent = '❌ Error: ' + error.message;
         btn.disabled = false;
       }
     }
+    
+    // Auto-close on timeout (2 minutes)
+    let timeoutCheck = setTimeout(() => {
+      const status = document.getElementById('status');
+      if (status) {
+        status.parentElement.className = 'status error';
+        status.textContent = '⏱️ Timeout - Closing window...';
+      }
+      setTimeout(() => window.close(), 1000);
+    }, 120000);
     
     // Auto-start on load
     window.onload = () => {
@@ -735,6 +764,14 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 
         // Timeout after 2 minutes
         timeoutId = setTimeout(() => {
+          // Send timeout response to any open browser windows
+          connections.forEach(conn => {
+            if (!conn.destroyed) {
+              conn.write('HTTP/1.1 200 OK\r\n');
+              conn.write('Content-Type: text/html\r\n\r\n');
+              conn.write(`<script>window.close();</script><html><body><h1>Timeout - Window closing...</h1></body></html>`);
+            }
+          });
           connections.forEach(conn => conn.destroy());
           server.close(() => {
             reject(new Error('Authentication timeout - no response received'));
