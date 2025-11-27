@@ -693,31 +693,54 @@ async function encryptKey(
     throw new Error('dotenvx encrypt failed. Please ensure dotenvx is installed and you have a .env file to encrypt.');
   }
 
-  // Step 2: Check if encrypted file already exists
+  // Step 2: Check if encrypted file already exists and verify provider match
   if (existsSync(outputPath)) {
-    console.log(`Encrypted file ${outputPath} already exists. Attempting to decrypt to verify...`);
+    const encryptedContent = readFileSync(outputPath, 'utf-8').trim();
+    const existingKeys = parseEncryptedKeys(encryptedContent);
     
-    // Try to decrypt the existing encrypted file
-    try {
-      const encryptedContent = readFileSync(outputPath, 'utf-8').trim();
-      const existingKeys = parseEncryptedKeys(encryptedContent);
-
-      // Attempt decryption (will use the provider specified in each key)
-      for (const keyEntry of existingKeys) {
-        const provider = keyEntry.provider === 'password' ? getDefaultProvider() : getProvider(keyEntry.provider);
+    if (existingKeys.length > 0) {
+      // Check if any existing keys use a different provider
+      const existingProviders = new Set(existingKeys.map(k => k.provider));
+      const uniqueProviders = Array.from(existingProviders);
+      
+      // If there's a provider mismatch, show helpful error
+      if (uniqueProviders.length > 0 && !uniqueProviders.includes(providerName)) {
+        const currentProvider = uniqueProviders[0]; // Use first provider found
+        const currentProviderDisplay = currentProvider === 'password' ? 'password (encrypted:)' : currentProvider;
         
-        if (providedPassword && (provider.name === 'password' || provider.name === 'tpm2')) {
-          await (provider as any).decrypt(keyEntry.encryptedValue, providedPassword);
-        } else {
-          await provider.decrypt(keyEntry.encryptedValue);
-        }
+        console.error(`\n❌ Provider mismatch detected!`);
+        console.error(`   Current encrypted keys use provider: ${currentProviderDisplay}`);
+        console.error(`   You requested provider: ${providerName}`);
+        console.error(`\n   To change providers, you must:`);
+        console.error(`   1. Decrypt the existing keys: vhsm decrypt --restore`);
+        console.error(`   2. Re-encrypt with the new provider: vhsm encrypt -p ${providerName}`);
+        console.error(`\n   Or use the correct provider:`);
+        console.error(`   vhsm encrypt -p ${currentProvider}\n`);
+        
+        throw new Error(`Cannot encrypt with provider '${providerName}'. Existing encrypted keys use provider '${currentProvider}'.`);
       }
       
-      console.log('✅ Encrypted file verified. Skipping encryption.');
-      return;
-    } catch (error) {
-      console.log('⚠️  Could not decrypt existing file. Will re-encrypt...');
-      // Continue to encryption below
+      // Provider matches - attempt to decrypt to verify
+      console.log(`Encrypted file ${outputPath} already exists. Attempting to decrypt to verify...`);
+      
+      try {
+        // Attempt decryption (will use the provider specified in each key)
+        for (const keyEntry of existingKeys) {
+          const provider = keyEntry.provider === 'password' ? getDefaultProvider() : getProvider(keyEntry.provider);
+          
+          if (providedPassword && (provider.name === 'password' || provider.name === 'tpm2')) {
+            await (provider as any).decrypt(keyEntry.encryptedValue, providedPassword);
+          } else {
+            await provider.decrypt(keyEntry.encryptedValue);
+          }
+        }
+        
+        console.log('✅ Encrypted file verified. Skipping encryption.');
+        return;
+      } catch (error) {
+        console.log('⚠️  Could not decrypt existing file. Will re-encrypt...');
+        // Continue to encryption below
+      }
     }
   }
 
