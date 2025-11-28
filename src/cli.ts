@@ -790,7 +790,7 @@ async function encryptKey(
     
     // Test encrypt with dummy data to validate password works
     try {
-      encryptKeyWithPassword('test-validation', validatedPassword!);
+      await encryptKeyWithPassword('test-validation', validatedPassword!);
       console.log('✅ Password validated.');
     } catch (error) {
       throw new Error(`Password validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1016,13 +1016,13 @@ async function encryptKey(
     // Password-based encryption - password already validated before dotenvx
     const { encryptKeyWithPassword } = await import('./providers/password.js');
     
-    console.log('Encrypting keys with password...');
+    console.log('Encrypting keys with password (using Argon2id)...');
 
     for (const [i, key] of keyValues.entries()) {
       const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
       // Only encrypt if this key doesn't already exist in the output
       if (!outputContent.includes(`${vhsmKey}=`)) {
-        const encrypted = encryptKeyWithPassword(key, validatedPassword!);
+        const encrypted = await encryptKeyWithPassword(key, validatedPassword!);
         const encapsulatedKey = `${vhsmKey}=encrypted:${encrypted}`;
         outputContent += `\n${encapsulatedKey}`;
       }

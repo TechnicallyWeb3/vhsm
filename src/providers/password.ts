@@ -2,10 +2,54 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import type { KeyDecryptionProvider } from '../types.js';
 import { DecryptionError } from '../types.js';
 import inquirer from 'inquirer';
+import argon2 from 'argon2';
+
+// KDF version identifiers
+const KDF_VERSION_SHA256 = 'sha256'; // Legacy format (backward compatibility)
+const KDF_VERSION_ARGON2ID = 'argon2id'; // New default format
+
+// Argon2id parameters (OWASP recommended)
+const ARGON2_MEMORY_COST = 65536; // 64 MB
+const ARGON2_TIME_COST = 3; // iterations
+const ARGON2_PARALLELISM = 4; // threads
+const ARGON2_KEYLEN = 32; // 32 bytes for AES-256
+
+/**
+ * Derives a key from a password using the specified KDF
+ */
+async function deriveKey(
+  password: string,
+  salt: Buffer,
+  kdfVersion: string = KDF_VERSION_ARGON2ID
+): Promise<Buffer> {
+  if (kdfVersion === KDF_VERSION_ARGON2ID) {
+    // Use Argon2id for new keys
+    return Buffer.from(
+      await argon2.hash(password, {
+        type: argon2.argon2id,
+        salt: salt,
+        memoryCost: ARGON2_MEMORY_COST,
+        timeCost: ARGON2_TIME_COST,
+        parallelism: ARGON2_PARALLELISM,
+        hashLength: ARGON2_KEYLEN,
+        raw: true, // Return raw buffer instead of encoded string
+      })
+    );
+  } else if (kdfVersion === KDF_VERSION_SHA256) {
+    // Legacy SHA256 for backward compatibility
+    return createHash('sha256')
+      .update(password)
+      .update(salt)
+      .digest();
+  } else {
+    throw new DecryptionError(`Unsupported KDF version: ${kdfVersion}`);
+  }
+}
 
 /**
  * Password-based key decryption provider
  * Uses AES-256-GCM for encryption/decryption
+ * Supports Argon2id (default) and SHA256 (legacy) key derivation
  */
 export class PasswordProvider implements KeyDecryptionProvider {
   readonly name = 'password';
@@ -16,13 +60,30 @@ export class PasswordProvider implements KeyDecryptionProvider {
    */
   async decrypt(encryptedKey: string, providedPassword?: string): Promise<string> {
     try {
-      // Parse the encrypted key format: salt:iv:tag:encryptedData (all base64)
+      // Parse the encrypted key format
+      // Old format (4 parts): salt:iv:tag:encryptedData (all base64) - uses SHA256
+      // New format (5 parts): kdfVersion:salt:iv:tag:encryptedData - uses specified KDF
       const parts = encryptedKey.split(':');
-      if (parts.length !== 4) {
+      
+      let kdfVersion: string;
+      let saltB64: string;
+      let ivB64: string;
+      let tagB64: string;
+      let encryptedB64: string;
+
+      if (parts.length === 4) {
+        // Old format - backward compatibility with SHA256
+        [saltB64, ivB64, tagB64, encryptedB64] = parts;
+        kdfVersion = KDF_VERSION_SHA256;
+      } else if (parts.length === 5) {
+        // New format with KDF version
+        [kdfVersion, saltB64, ivB64, tagB64, encryptedB64] = parts;
+        if (kdfVersion !== KDF_VERSION_SHA256 && kdfVersion !== KDF_VERSION_ARGON2ID) {
+          throw new DecryptionError(`Unsupported KDF version: ${kdfVersion}`);
+        }
+      } else {
         throw new DecryptionError('Invalid encrypted key format');
       }
-
-      const [saltB64, ivB64, tagB64, encryptedB64] = parts;
       
       const salt = Buffer.from(saltB64, 'base64');
       const iv = Buffer.from(ivB64, 'base64');
@@ -51,11 +112,8 @@ export class PasswordProvider implements KeyDecryptionProvider {
         password = prompt.password;
       }
 
-      // Derive key from password using PBKDF2
-      const key = createHash('sha256')
-        .update(password)
-        .update(salt)
-        .digest();
+      // Derive key from password using the specified KDF
+      const key = await deriveKey(password, salt, kdfVersion);
 
       // Decrypt using AES-256-GCM
       const decipher = createDecipheriv('aes-256-gcm', key, iv);
@@ -91,17 +149,18 @@ export class PasswordProvider implements KeyDecryptionProvider {
 /**
  * Utility function to encrypt a key with a password
  * This is useful for initial setup
+ * Uses Argon2id by default for secure key derivation
  */
-export function encryptKeyWithPassword(
+export async function encryptKeyWithPassword(
   plaintextKey: string,
-  password: string
-): string {
+  password: string,
+  kdfVersion: string = KDF_VERSION_ARGON2ID
+): Promise<string> {
   const salt = randomBytes(16);
   const iv = randomBytes(12); // 96 bits for GCM
-  const key = createHash('sha256')
-    .update(password)
-    .update(salt)
-    .digest();
+  
+  // Derive key using the specified KDF (Argon2id by default)
+  const key = await deriveKey(password, salt, kdfVersion);
 
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   
@@ -110,8 +169,9 @@ export function encryptKeyWithPassword(
   
   const tag = cipher.getAuthTag();
 
-  // Format: salt:iv:tag:encryptedData (all base64)
+  // Format: kdfVersion:salt:iv:tag:encryptedData (all base64 except kdfVersion)
   return [
+    kdfVersion,
     salt.toString('base64'),
     iv.toString('base64'),
     tag.toString('base64'),
