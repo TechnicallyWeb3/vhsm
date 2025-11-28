@@ -12,5 +12,7 @@ export { TPM2Provider, encryptKeyWithTPM2, isTPM2Available } from './providers/t
 export { SessionCache } from './cache.js';
 export { createKeyId, sanitizeError, clearString } from './security.js';
 export { loadConfig } from './config.js';
+export { exec } from './exec.js';
 export type { KeyDecryptionProvider, VhsmConfig, CachedKey, DecryptionError } from './types.js';
+export type { ExecOptions } from './exec.js';
 

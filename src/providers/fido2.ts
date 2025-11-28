@@ -131,8 +131,11 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
   /**
    * Decrypts the encrypted key using FIDO2 authentication
    * Format: credentialId:iv:authTag:encryptedData
+   * Supports both legacy interface (string password - unused for FIDO2) and new interface (ProviderConfig)
    */
-  async decrypt(encryptedKey: string, _config?: ProviderConfig): Promise<string> {
+  async decrypt(encryptedKey: string, _configOrPassword?: ProviderConfig | string): Promise<string> {
+    // Support both old interface (string) and new interface (ProviderConfig)
+    // FIDO2 doesn't use password/config for decryption, so we ignore it
     try {
       // Parse the encrypted key
       const parts = encryptedKey.split(':');
