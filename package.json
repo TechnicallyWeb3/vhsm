@@ -4,7 +4,7 @@
   "description": "Virtual HSM - Secure dotenvx wrapper with pluggable key decryption",
   "type": "module",
   "bin": {
-    "vhsm": "dist/cli.js"
+    "vhsm": "dist/cli/vhsm.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
