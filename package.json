@@ -19,7 +19,10 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
-    "prepublishOnly": "npm run build"
+    "test:compile": "tsc --project tsconfig.test.json",
+    "test": "npm run test:compile && mocha --timeout 30000 'test-dist/**/*.test.js'",
+    "test:watch": "npm run test:compile && mocha --timeout 30000 --watch 'test-dist/**/*.test.js'",
+    "prepublishOnly": "npm run build && npm run test"
   },
   "keywords": [
     "dotenvx",
@@ -55,6 +58,10 @@
   "devDependencies": {
     "@types/inquirer": "^9.0.7",
     "@types/node": "^20.10.6",
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "chai": "^4.3.10",
+    "mocha": "^10.2.0",
     "typescript": "^5.3.3"
   },
   "peerDependencies": {

@@ -79,6 +79,7 @@ export async function decryptCommand(options: {
   envFile?: string[];
   key?: string[];
   excludeKey?: string[];
+  keyOnly?: boolean;
 }) {
   const config = loadConfig();
   const enableCache = options.cache !== false && (config.enableCache !== false);
@@ -89,6 +90,11 @@ export async function decryptCommand(options: {
   // Validate conflicting options
   if (options.restore && options.remove) {
     throw new Error('Cannot use --restore and --remove together. --restore writes keys to a file, while --remove deletes them. Please use only one option.');
+  }
+
+  // Validate key-only flag conflicts
+  if (options.keyOnly && (options.key || options.excludeKey)) {
+    throw new Error('Cannot use --key-only with -k/--key or -ek/--exclude-key. --key-only only decrypts private keys and does not decrypt env vars.');
   }
 
   // Handle remove option with -k or -ek flags
@@ -233,6 +239,20 @@ export async function decryptCommand(options: {
     } else {
       console.log(`✅ All keys already exist in: ${outputPath}`);
     }
+  }
+
+  // If --key-only is set, skip dotenvx decrypt and exit early
+  if (finalOptions.keyOnly) {
+    console.log('✅ Decrypted private keys only (env vars not decrypted)');
+    
+    // Clear decrypted keys from memory
+    setTimeout(() => {
+      for (const key of decryptedKeys) {
+        clearString(key.decryptedValue);
+      }
+    }, 100);
+    
+    process.exit(0);
   }
 
   // Prepare environment with decrypted keys

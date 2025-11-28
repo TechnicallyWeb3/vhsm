@@ -100,6 +100,7 @@ program
   .option('-r, --restore', 'Restore the decrypted key to a .env.keys file')
   .option('-rm, --remove', 'Remove decrypted keys from .env.keys and .env.keys.encrypted files after decryption')
   .option('-fk, --env-keys-file <path>', 'Output path for restored key file (used with --restore)', '.env.keys')
+  .option('-ko, --key-only', 'Only decrypt the dotenvx private keys, do not decrypt env vars')
   // Pass-through options for dotenvx decrypt
   .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
   .option('-k, --key <keys...>', 'Key(s) to decrypt (default: all keys in file)')

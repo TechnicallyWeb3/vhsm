@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./test-dist",
+    "rootDir": "./test",
+    "module": "ES2022",
+    "moduleResolution": "node",
+    "types": ["node", "mocha", "chai"]
+  },
+  "include": ["test/**/*"],
+  "exclude": ["node_modules", "dist", "test-dist", "src"]
+}
+
