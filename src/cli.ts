@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { Command } from 'commander';
 import { getProvider, getDefaultProvider, listProviders } from './providers/index.js';
 import { SessionCache } from './cache.js';
@@ -125,6 +125,7 @@ program
   .option('-nc, --no-cache', 'Disable session caching')
   .option('-ct, --cache-timeout <ms>', 'Cache timeout in milliseconds', '3600000')
   .option('-r, --restore', 'Restore the decrypted key to a .env.keys file')
+  .option('-rm, --remove', 'Remove decrypted keys from .env.keys and .env.keys.encrypted files after decryption')
   .option('-fk, --env-keys-file <path>', 'Output path for restored key file (used with --restore)', '.env.keys')
   // Pass-through options for dotenvx decrypt
   .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
@@ -343,6 +344,284 @@ function getProviderAndCacheSettings(
   return { provider, enableCache, cacheTimeout };
 }
 
+/**
+ * Parse DOTENV_PRIVATE_KEY entries from .env.keys file
+ */
+function parseDotenvKeys(content: string): Array<{ dotenvKey: string; envFile: string | null }> {
+  const keys: Array<{ dotenvKey: string; envFile: string | null }> = [];
+  const lines = content.split('\n');
+  let currentEnvFile: string | null = null;
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Track commented filename (e.g., "# .env.local")
+    if (trimmed.startsWith('#') && !trimmed.startsWith('#/') && trimmed.length > 1) {
+      const envFileMatch = /^#\s*(\.env[^\s]*)/.exec(trimmed);
+      if (envFileMatch) {
+        currentEnvFile = envFileMatch[1];
+      }
+      continue;
+    }
+    
+    // Match DOTENV_PRIVATE_KEY[_SUFFIX]=...
+    const match = /^(DOTENV_PRIVATE_KEY[^=]*)=(.*)/.exec(trimmed);
+    if (match) {
+      keys.push({
+        dotenvKey: match[1],
+        envFile: currentEnvFile,
+      });
+    }
+  }
+  
+  return keys;
+}
+
+/**
+ * Remove keys from .env.keys file
+ */
+function removeKeysFromDotenvKeysFile(
+  filePath: string,
+  keysToRemove: string[]
+): { removed: boolean; shouldDelete: boolean } {
+  if (!existsSync(filePath)) {
+    return { removed: false, shouldDelete: false };
+  }
+  
+  const content = readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const keysToRemoveSet = new Set(keysToRemove);
+  
+  const headerLines: string[] = [];
+  const remainingLines: string[] = [];
+  let removedAny = false;
+  let pendingComment: string | null = null;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    // Keep header lines (starting with #/)
+    if (trimmed.startsWith('#/')) {
+      headerLines.push(line);
+      pendingComment = null;
+      continue;
+    }
+    
+    // Track commented filename (e.g., "# .env.local")
+    if (trimmed.startsWith('#') && !trimmed.startsWith('#/') && trimmed.length > 1) {
+      const envFileMatch = /^#\s*(\.env[^\s]*)/.exec(trimmed);
+      if (envFileMatch) {
+        // Store this comment, but don't add it yet - wait to see if next line is a key to remove
+        pendingComment = line;
+        continue;
+      }
+    }
+    
+    // Check if this is a key line to remove
+    const keyMatch = /^(DOTENV_PRIVATE_KEY[^=]*)=/.exec(trimmed);
+    if (keyMatch && keysToRemoveSet.has(keyMatch[1])) {
+      removedAny = true;
+      // Skip this key and discard any pending comment
+      pendingComment = null;
+      continue;
+    }
+    
+    // Keep this line - add pending comment first if it exists
+    if (pendingComment !== null) {
+      remainingLines.push(pendingComment);
+      pendingComment = null;
+    }
+    remainingLines.push(line);
+  }
+  
+  // Check if there are any keys remaining
+  const remainingKeys = parseDotenvKeys(remainingLines.join('\n'));
+  const shouldDelete = remainingKeys.length === 0;
+  
+  if (removedAny) {
+    if (shouldDelete) {
+      unlinkSync(filePath);
+    } else {
+      // Reconstruct file with header if it existed
+      const newContent = headerLines.length > 0 
+        ? headerLines.join('\n') + '\n' + remainingLines.join('\n')
+        : remainingLines.join('\n');
+      writeFileSync(filePath, newContent, { mode: 0o600 });
+    }
+  }
+  
+  return { removed: removedAny, shouldDelete };
+}
+
+/**
+ * Remove keys from .env.keys.encrypted file
+ */
+function removeKeysFromEncryptedFile(
+  filePath: string,
+  vhsmKeysToRemove: string[]
+): { removed: boolean; shouldDelete: boolean } {
+  if (!existsSync(filePath)) {
+    return { removed: false, shouldDelete: false };
+  }
+  
+  const content = readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const keysToRemoveSet = new Set(vhsmKeysToRemove);
+  
+  const headerLines: string[] = [];
+  const remainingLines: string[] = [];
+  let removedAny = false;
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    
+    // Keep header lines (starting with #/)
+    if (trimmed.startsWith('#/')) {
+      headerLines.push(line);
+      continue;
+    }
+    
+    // Check if this is a key line to remove
+    const keyMatch = /^(VHSM_PRIVATE_KEY[^=]*)=/.exec(trimmed);
+    if (keyMatch && keysToRemoveSet.has(keyMatch[1])) {
+      removedAny = true;
+      continue;
+    }
+    
+    // Keep this line
+    if (trimmed) {
+      remainingLines.push(line);
+    }
+  }
+  
+  // Check if there are any keys remaining
+  const remainingKeys = parseEncryptedKeys(remainingLines.join('\n'));
+  const shouldDelete = remainingKeys.length === 0;
+  
+  if (removedAny) {
+    if (shouldDelete) {
+      unlinkSync(filePath);
+    } else {
+      const newContent = headerLines.length > 0 
+        ? headerLines.join('\n') + '\n' + remainingLines.join('\n')
+        : remainingLines.join('\n');
+      writeFileSync(filePath, newContent, { mode: 0o600 });
+    }
+  }
+  
+  return { removed: removedAny, shouldDelete };
+}
+
+/**
+ * Check if a pattern exists in .gitignore
+ */
+function isPatternInGitignore(pattern: string, gitignorePath: string = '.gitignore'): boolean {
+  if (!existsSync(gitignorePath)) {
+    return false;
+  }
+  
+  const content = readFileSync(gitignorePath, 'utf-8');
+  const lines = content.split('\n');
+  
+  // Normalize pattern for comparison (remove leading/trailing whitespace)
+  const normalizedPattern = pattern.trim();
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Check for exact match or if the line contains the pattern
+    // Also handle patterns with wildcards or path separators
+    if (trimmed === normalizedPattern || 
+        trimmed === `/${normalizedPattern}` ||
+        trimmed.endsWith(normalizedPattern) ||
+        trimmed.includes(normalizedPattern)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Add a pattern to .gitignore
+ */
+function addPatternToGitignore(pattern: string, gitignorePath: string = '.gitignore'): void {
+  let content = '';
+  
+  if (existsSync(gitignorePath)) {
+    content = readFileSync(gitignorePath, 'utf-8');
+    // Ensure file ends with newline
+    if (!content.endsWith('\n')) {
+      content += '\n';
+    }
+  }
+  
+  // Add the pattern
+  content += `${pattern}\n`;
+  
+  writeFileSync(gitignorePath, content, { mode: 0o644 });
+}
+
+/**
+ * Remove header, public key, and filename comment from .env file
+ * Removes everything from the first #/ line up to and including the first # .env* comment
+ */
+function removeHeaderAndPublicKeyFromEnvFile(filePath: string): { removed: boolean } {
+  if (!existsSync(filePath)) {
+    return { removed: false };
+  }
+  
+  const content = readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n');
+  const remainingLines: string[] = [];
+  let removedAny = false;
+  let inHeaderSection = true;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    if (inHeaderSection) {
+      // Skip header lines (starting with #/)
+      if (trimmed.startsWith('#/')) {
+        removedAny = true;
+        continue;
+      }
+      
+      // Skip public key line (DOTENV_PUBLIC_KEY or DOTENV_PUBLIC_KEY_*)
+      if (/^DOTENV_PUBLIC_KEY[^=]*=/.test(trimmed)) {
+        removedAny = true;
+        continue;
+      }
+      
+      // Skip empty lines in the header section
+      if (!trimmed) {
+        removedAny = true;
+        continue;
+      }
+      
+      // Skip filename comment (e.g., "# .env.local" or "# .env")
+      // This marks the end of the header section
+      if (trimmed.startsWith('#') && /^#\s*\.env/.test(trimmed)) {
+        removedAny = true;
+        inHeaderSection = false; // End of header section, start keeping lines
+        continue;
+      }
+    }
+    
+    // Keep all lines after the header section
+    remainingLines.push(line);
+  }
+  
+  if (removedAny) {
+    // Write back the cleaned content, preserving trailing newlines
+    const newContent = remainingLines.join('\n');
+    writeFileSync(filePath, newContent, { mode: 0o644 });
+  }
+  
+  return { removed: removedAny };
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
@@ -493,6 +772,7 @@ async function decryptCommand(options: {
   cache?: boolean;
   cacheTimeout?: string;
   restore?: boolean;
+  remove?: boolean;
   encryptedKeyFile?: string;
   envKeysFile?: string;
   envFile?: string[];
@@ -505,8 +785,35 @@ async function decryptCommand(options: {
     ? parseInt(options.cacheTimeout, 10) 
     : (config.cacheTimeout || 3600000);
 
+  // Validate conflicting options
+  if (options.restore && options.remove) {
+    throw new Error('Cannot use --restore and --remove together. --restore writes keys to a file, while --remove deletes them. Please use only one option.');
+  }
+
+  // Handle remove option with -k or -ek flags
+  let finalOptions = { ...options };
+  if (options.remove && (options.key || options.excludeKey)) {
+    const inquirer = (await import('inquirer')).default;
+    console.warn('\n⚠️  WARNING: Using --remove with -k/--key or -ek/--exclude-key flags will cause loss of secrets!');
+    console.warn('   Only the specified keys will be removed, potentially leaving other keys encrypted.');
+    
+    const answer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'proceed',
+        message: 'Proceed with removing only the specified keys? (y/n)',
+        default: false,
+      },
+    ]);
+    
+    if (!answer.proceed) {
+      console.log('Removing -k/--key and -ek/--exclude-key flags. All keys will be decrypted and removed.');
+      finalOptions = { ...options, key: undefined, excludeKey: undefined };
+    }
+  }
+
   // Load and parse encrypted key file
-  const keyPath = options.encryptedKeyFile || '.env.keys.encrypted';
+  const keyPath = finalOptions.encryptedKeyFile || '.env.keys.encrypted';
   const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
   const availableKeys = parseEncryptedKeys(encryptedKeyContent);
 
@@ -515,7 +822,7 @@ async function decryptCommand(options: {
   }
 
   // Match keys to env files
-  const envFiles = options.envFile || ['.env'];
+  const envFiles = finalOptions.envFile || ['.env'];
   const keysToProcess = matchKeysToEnvFiles(envFiles, availableKeys);
 
   if (keysToProcess.length === 0) {
@@ -523,13 +830,13 @@ async function decryptCommand(options: {
   }
 
   // Decrypt all keys (each key may use a different provider)
-  const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string; envFile: string }> = [];
+  const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string; envFile: string; vhsmKey: string }> = [];
 
   for (const keyEntry of keysToProcess) {
     const decryptedValue = await decryptKeyWithCache(
       keyEntry.encryptedValue,
       keyEntry.provider,
-      options.password,
+      finalOptions.password,
       enableCache,
       cacheTimeout,
       keyEntry.vhsmKey
@@ -539,15 +846,15 @@ async function decryptCommand(options: {
       dotenvKey: keyEntry.dotenvKey,
       decryptedValue,
       envFile: keyEntry.envFile,
+      vhsmKey: keyEntry.vhsmKey,
     });
 
     console.log(`✅ Decrypted ${keyEntry.vhsmKey} → ${keyEntry.dotenvKey} (provider: ${keyEntry.provider})`);
   }
 
   // If --restore is specified, write the keys to a file
-  if (options.restore) {
-    const outputPath = options.envKeysFile || '.env.keys';
-    const { writeFileSync, readFileSync, existsSync } = await import('node:fs');
+  if (finalOptions.restore) {
+    const outputPath = finalOptions.envKeysFile || '.env.keys';
     
     let keysFileContent = '';
     const existingKeys = new Set<string>();
@@ -610,20 +917,20 @@ async function decryptCommand(options: {
   // Build dotenvx decrypt arguments
   const dotenvxArgs: string[] = ['decrypt'];
   
-  if (options.envFile && options.envFile.length > 0) {
-    dotenvxArgs.push('-f', ...options.envFile);
+  if (finalOptions.envFile && finalOptions.envFile.length > 0) {
+    dotenvxArgs.push('-f', ...finalOptions.envFile);
   }
   
-  if (options.envKeysFile && options.envKeysFile !== '.env.keys') {
-    dotenvxArgs.push('-fk', options.envKeysFile);
+  if (finalOptions.envKeysFile && finalOptions.envKeysFile !== '.env.keys') {
+    dotenvxArgs.push('-fk', finalOptions.envKeysFile);
   }
   
-  if (options.key && options.key.length > 0) {
-    dotenvxArgs.push('-k', ...options.key);
+  if (finalOptions.key && finalOptions.key.length > 0) {
+    dotenvxArgs.push('-k', ...finalOptions.key);
   }
   
-  if (options.excludeKey && options.excludeKey.length > 0) {
-    dotenvxArgs.push('-ek', ...options.excludeKey);
+  if (finalOptions.excludeKey && finalOptions.excludeKey.length > 0) {
+    dotenvxArgs.push('-ek', ...finalOptions.excludeKey);
   }
 
   // Spawn dotenvx decrypt
@@ -632,13 +939,6 @@ async function decryptCommand(options: {
     env,
     shell: process.platform === 'win32',
   });
-
-  // Clear decrypted keys from memory
-  setTimeout(() => {
-    for (const key of decryptedKeys) {
-      clearString(key.decryptedValue);
-    }
-  }, 100);
 
   // Wait for child process to exit
   const exitCode = await new Promise<number>((resolve) => {
@@ -651,6 +951,51 @@ async function decryptCommand(options: {
       resolve(1);
     });
   });
+
+  // If --remove is specified, remove keys from files after successful decryption
+  if (finalOptions.remove && exitCode === 0) {
+    const dotenvKeysToRemove = decryptedKeys.map(k => k.dotenvKey);
+    const vhsmKeysToRemove = decryptedKeys.map(k => k.vhsmKey);
+    
+    const keysFilePath = finalOptions.envKeysFile || '.env.keys';
+    const encryptedFilePath = finalOptions.encryptedKeyFile || '.env.keys.encrypted';
+    
+    // Remove from .env.keys file
+    const keysResult = removeKeysFromDotenvKeysFile(keysFilePath, dotenvKeysToRemove);
+    if (keysResult.removed) {
+      if (keysResult.shouldDelete) {
+        console.log(`✅ Removed keys and deleted ${keysFilePath} (no keys remaining)`);
+      } else {
+        console.log(`✅ Removed keys from ${keysFilePath}`);
+      }
+    }
+    
+    // Remove from .env.keys.encrypted file
+    const encryptedResult = removeKeysFromEncryptedFile(encryptedFilePath, vhsmKeysToRemove);
+    if (encryptedResult.removed) {
+      if (encryptedResult.shouldDelete) {
+        console.log(`✅ Removed keys and deleted ${encryptedFilePath} (no keys remaining)`);
+      } else {
+        console.log(`✅ Removed keys from ${encryptedFilePath}`);
+      }
+    }
+    
+    // Remove header, public key, and filename comment from .env files
+    const envFiles = finalOptions.envFile || ['.env'];
+    for (const envFile of envFiles) {
+      const envResult = removeHeaderAndPublicKeyFromEnvFile(envFile);
+      if (envResult.removed) {
+        console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
+      }
+    }
+  }
+
+  // Clear decrypted keys from memory
+  setTimeout(() => {
+    for (const key of decryptedKeys) {
+      clearString(key.decryptedValue);
+    }
+  }, 100);
 
   process.exit(exitCode);
 }
@@ -858,6 +1203,49 @@ async function encryptKey(
     console.log('✅ DPAPI ready.');
   }
 
+  // Step 2.5: Check and offer to add .env.keys to .gitignore if -fk flag is set
+  const envKeysFile = dotenvxOptions?.envKeysFile || keyFile;
+  if (envKeysFile) {
+    const gitignorePath = '.gitignore';
+    const keysFileName = envKeysFile.includes('/') || envKeysFile.includes('\\') 
+      ? envKeysFile.split(/[/\\]/).pop() || envKeysFile
+      : envKeysFile;
+    
+    // Check if pattern already exists in .gitignore
+    const patternsToCheck = [
+      keysFileName,
+      `/${keysFileName}`,
+      `**/${keysFileName}`,
+      envKeysFile,
+      `/${envKeysFile}`,
+    ];
+    
+    let patternExists = false;
+    for (const pattern of patternsToCheck) {
+      if (isPatternInGitignore(pattern, gitignorePath)) {
+        patternExists = true;
+        break;
+      }
+    }
+    
+    if (!patternExists) {
+      const answer = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'addToGitignore',
+          message: `Add ${keysFileName} to .gitignore? (recommended to prevent committing private keys)`,
+          default: true,
+        },
+      ]);
+      
+      if (answer.addToGitignore) {
+        // Use the simplest pattern (just the filename)
+        addPatternToGitignore(keysFileName, gitignorePath);
+        console.log(`✅ Added ${keysFileName} to .gitignore`);
+      }
+    }
+  }
+
   // Step 3: Run dotenvx encrypt to generate/update .env.keys (only after validation)
   console.log('Running dotenvx encrypt...');
   
@@ -865,7 +1253,6 @@ async function encryptKey(
   const dotenvxArgs: string[] = ['encrypt'];
   
   // Pass -fk flag if specified (use the one from options if provided, otherwise use keyFile parameter)
-  const envKeysFile = dotenvxOptions?.envKeysFile || keyFile;
   if (envKeysFile && envKeysFile !== '.env.keys') {
     dotenvxArgs.push('-fk', envKeysFile);
   }
