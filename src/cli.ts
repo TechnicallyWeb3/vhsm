@@ -61,7 +61,7 @@ program
   .command('run')
   .description('Decrypt dotenvx private key and run a command with dotenvx')
   .argument('<command...>', 'Command to run with dotenvx')
-  .option('-ef, --encrypted-key <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
+  .option('-ef, --encrypted-keys-file <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
   .option('-p, --provider <name>', 'Key decryption provider to use', 'password')
   .option('-pw, --password <pass>', 'Password/passphrase for decryption (for testing)')
   .option('-nc, --no-cache', 'Disable session caching')
@@ -78,7 +78,7 @@ program
   .option('--ops-off', 'Disable dotenvx-ops features')
   .action(async (command: string[], options) => {
     try {
-      await runCommand(command, options);
+      await runCommand(command, options as any);
     } catch (error) {
       const sanitized = sanitizeError(error);
       console.error(`Error: ${sanitized.message}`);
@@ -92,6 +92,7 @@ program
   .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi, fido2, tpm2)', 'password')
   .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing, password/tpm2 providers only)')
   .option('-nd, --no-delete', 'Do not delete the original .env.keys file after encryption')
+  .option('-gi, --gitignore [patterns...]', 'Add files to .gitignore (no args = all files, or specify space-separated patterns)')
   // Pass-through options for dotenvx encrypt
   .option('-fk, --env-keys-file <path>', 'Path to plaintext private key file (output will be <path>.encrypted)', '.env.keys')
   .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
@@ -112,6 +113,7 @@ program
         envFile: options.envFile,
         key: options.key,
         excludeKey: options.excludeKey,
+        gitignore: options.gitignore,
       });
       process.exit(0);
     } catch (error) {
@@ -124,7 +126,7 @@ program
 program
   .command('decrypt')
   .description('Decrypt dotenvx private key and run dotenvx decrypt')
-  .option('-ef, --encrypted-key <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
+  .option('-ef, --encrypted-keys-file <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
   .option('-p, --provider <name>', 'Key decryption provider to use', 'password')
   .option('-pw, --password <pass>', 'Password/passphrase for decryption (for testing)')
   .option('-nc, --no-cache', 'Disable session caching')
@@ -632,7 +634,7 @@ function removeHeaderAndPublicKeyFromEnvFile(filePath: string): { removed: boole
 // ============================================================================
 
 async function runCommand(command: string[], options: {
-  encryptedKeyFile?: string;
+  encryptedKeysFile?: string;
   provider?: string;
   password?: string;
   cache?: boolean;
@@ -655,7 +657,7 @@ async function runCommand(command: string[], options: {
     : (config.cacheTimeout || 3600000);
 
   // Load and parse encrypted key file
-  const keyPath = options.encryptedKeyFile || '.env.keys.encrypted';
+  const keyPath = options.encryptedKeysFile || '.env.keys.encrypted';
   const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
   const availableKeys = parseEncryptedKeys(encryptedKeyContent);
 
@@ -778,7 +780,7 @@ async function decryptCommand(options: {
   cacheTimeout?: string;
   restore?: boolean;
   remove?: boolean;
-  encryptedKeyFile?: string;
+  encryptedKeysFile?: string;
   envKeysFile?: string;
   envFile?: string[];
   key?: string[];
@@ -818,7 +820,7 @@ async function decryptCommand(options: {
   }
 
   // Load and parse encrypted key file
-  const keyPath = finalOptions.encryptedKeyFile || '.env.keys.encrypted';
+  const keyPath = finalOptions.encryptedKeysFile || '.env.keys.encrypted';
   const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
   const availableKeys = parseEncryptedKeys(encryptedKeyContent);
 
@@ -834,14 +836,40 @@ async function decryptCommand(options: {
     throw new Error('No matching encrypted keys found for the specified env files');
   }
 
+  // Check if any keys use password provider and prompt once if needed
+  let passwordForDecrypt = finalOptions.password;
+  const passwordKeys = keysToProcess.filter(k => k.provider === 'password');
+  
+  if (passwordKeys.length > 0 && !passwordForDecrypt) {
+    const inquirer = (await import('inquirer')).default;
+    const passwordPrompt = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Enter passphrase to decrypt keys:',
+        mask: '*',
+        validate: (input: string) => {
+          if (!input || input.length === 0) {
+            return 'Passphrase cannot be empty';
+          }
+          return true;
+        },
+      },
+    ]);
+    passwordForDecrypt = passwordPrompt.password;
+  }
+
   // Decrypt all keys (each key may use a different provider)
   const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string; envFile: string; vhsmKey: string }> = [];
 
   for (const keyEntry of keysToProcess) {
+    // Use the password we prompted for if this is a password key
+    const passwordToUse = keyEntry.provider === 'password' ? passwordForDecrypt : finalOptions.password;
+    
     const decryptedValue = await decryptKeyWithCache(
       keyEntry.encryptedValue,
       keyEntry.provider,
-      finalOptions.password,
+      passwordToUse,
       enableCache,
       cacheTimeout,
       keyEntry.vhsmKey
@@ -963,7 +991,7 @@ async function decryptCommand(options: {
     const vhsmKeysToRemove = decryptedKeys.map(k => k.vhsmKey);
     
     const keysFilePath = finalOptions.envKeysFile || '.env.keys';
-    const encryptedFilePath = finalOptions.encryptedKeyFile || '.env.keys.encrypted';
+    const encryptedFilePath = finalOptions.encryptedKeysFile || '.env.keys.encrypted';
     
     // Remove from .env.keys file
     const keysResult = removeKeysFromDotenvKeysFile(keysFilePath, dotenvKeysToRemove);
@@ -1016,6 +1044,7 @@ async function encryptKey(
     envFile?: string[];
     key?: string[];
     excludeKey?: string[];
+    gitignore?: string[] | boolean;
   }
 ) {
   const inquirer = (await import('inquirer')).default;
@@ -1100,7 +1129,8 @@ async function encryptKey(
     }
   } else if (providerName === 'password') {
     // For password, prompt and validate BEFORE dotenvx
-    const { encryptKeyWithPassword } = await import('./providers/password.js');
+    const { encryptKeyWithPassword, PasswordProvider } = await import('./providers/password.js');
+    const passwordProvider = new PasswordProvider();
     
     if (providedPassword) {
       validatedPassword = providedPassword;
@@ -1108,40 +1138,85 @@ async function encryptKey(
         throw new Error('Passphrase must be at least 8 characters');
       }
     } else {
-      // Prompt for password
-      const prompts = await inquirer.prompt([
-        {
-          type: 'password',
-          name: 'password',
-          message: 'Enter passphrase to encrypt the key:',
-          mask: '*',
-          validate: (input: string) => {
-            if (!input || input.length < 8) {
-              return 'Passphrase must be at least 8 characters';
+      // Check if there are existing password-encrypted keys
+      const existingPasswordKeys = existingKeys.filter(k => k.provider === 'password');
+      
+      if (existingPasswordKeys.length > 0) {
+        // Validate password against existing key
+        console.log('Existing encrypted keys found. Please enter the same passphrase to add a new key.');
+        let passwordValid = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (!passwordValid && attempts < maxAttempts) {
+          const passwordPrompt = await inquirer.prompt([
+            {
+              type: 'password',
+              name: 'password',
+              message: 'Enter passphrase to validate (must match existing keys):',
+              mask: '*',
+              validate: (input: string) => {
+                if (!input || input.length === 0) {
+                  return 'Passphrase cannot be empty';
+                }
+                return true;
+              },
+            },
+          ]);
+          
+          // Try to decrypt an existing key to validate the password
+          try {
+            await passwordProvider.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
+            validatedPassword = passwordPrompt.password;
+            passwordValid = true;
+            console.log('✅ Password validated against existing keys.');
+          } catch (error) {
+            attempts++;
+            if (attempts < maxAttempts) {
+              console.error(`❌ Password does not match existing keys. ${maxAttempts - attempts} attempt(s) remaining.`);
+            } else {
+              throw new Error('Password validation failed. Maximum attempts reached.');
             }
-            return true;
+          }
+        }
+      } else {
+        // No existing keys, prompt for new password with confirmation
+        const prompts = await inquirer.prompt([
+          {
+            type: 'password',
+            name: 'password',
+            message: 'Enter passphrase to encrypt the key:',
+            mask: '*',
+            validate: (input: string) => {
+              if (!input || input.length < 8) {
+                return 'Passphrase must be at least 8 characters';
+              }
+              return true;
+            },
           },
-        },
-        {
-          type: 'password',
-          name: 'confirmPassword',
-          message: 'Confirm passphrase:',
-          mask: '*',
-          validate: (input: string, answers: any) => {
-            if (input !== answers.password) {
-              return 'Passphrases do not match';
-            }
-            return true;
+          {
+            type: 'password',
+            name: 'confirmPassword',
+            message: 'Confirm passphrase:',
+            mask: '*',
+            validate: (input: string, answers: any) => {
+              if (input !== answers.password) {
+                return 'Passphrases do not match';
+              }
+              return true;
+            },
           },
-        },
-      ]);
-      validatedPassword = prompts.password;
+        ]);
+        validatedPassword = prompts.password;
+      }
     }
     
     // Test encrypt with dummy data to validate password works
     try {
       await encryptKeyWithPassword('test-validation', validatedPassword!);
-      console.log('✅ Password validated.');
+      if (existingKeys.length === 0) {
+        console.log('✅ Password validated.');
+      }
     } catch (error) {
       throw new Error(`Password validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -1208,82 +1283,102 @@ async function encryptKey(
     console.log('✅ DPAPI ready.');
   }
 
-  // Step 2.5: Check and offer to add files to .gitignore
+  // Step 2.5: Check and optionally add files to .gitignore
   const gitignorePath = '.gitignore';
   const envKeysFile = dotenvxOptions?.envKeysFile || keyFile;
   
-  // Helper function to prompt for adding a pattern to .gitignore
-  const promptForGitignore = async (pattern: string, displayName: string, message: string): Promise<boolean> => {
+  // Helper function to check if pattern exists in .gitignore
+  const checkGitignorePattern = (pattern: string): boolean => {
     const patternsToCheck = [
       pattern,
       `/${pattern}`,
       `**/${pattern}`,
     ];
     
-    let patternExists = false;
     for (const checkPattern of patternsToCheck) {
       if (isPatternInGitignore(checkPattern, gitignorePath)) {
-        patternExists = true;
-        break;
-      }
-    }
-    
-    if (!patternExists) {
-      const answer = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'addToGitignore',
-          message: message,
-          default: true,
-        },
-      ]);
-      
-      if (answer.addToGitignore) {
-        addPatternToGitignore(pattern, gitignorePath);
-        console.log(`✅ Added ${displayName} to .gitignore`);
         return true;
       }
     }
     return false;
   };
 
-  // Prompt 1: Add .env files to .gitignore
+  // Collect all files that should be in .gitignore
+  const filesToCheck: Array<{ name: string; displayName: string; type: string }> = [];
+  
+  // Add .env files
   const envFiles = dotenvxOptions?.envFile || ['.env'];
   for (const envFile of envFiles) {
     const envFileName = envFile.includes('/') || envFile.includes('\\') 
       ? envFile.split(/[/\\]/).pop() || envFile
       : envFile;
-    
-    await promptForGitignore(
-      envFileName,
-      envFileName,
-      `Add ${envFileName} to .gitignore? (recommended to prevent committing environment variables)`
-    );
+    filesToCheck.push({
+      name: envFileName,
+      displayName: envFileName,
+      type: 'environment variables',
+    });
   }
 
-  // Prompt 2: Add .env.keys file to .gitignore (only if -fk flag is used)
+  // Add .env.keys file (only if -fk flag is used)
   if (dotenvxOptions?.envKeysFile) {
     const keysFileName = envKeysFile.includes('/') || envKeysFile.includes('\\') 
       ? envKeysFile.split(/[/\\]/).pop() || envKeysFile
       : envKeysFile;
-    
-    await promptForGitignore(
-      keysFileName,
-      keysFileName,
-      `Add ${keysFileName} to .gitignore? (recommended to prevent committing private keys)`
-    );
+    filesToCheck.push({
+      name: keysFileName,
+      displayName: keysFileName,
+      type: 'private keys',
+    });
   }
 
-  // Prompt 3: Add .env.keys.encrypted file to .gitignore
+  // Add .env.keys.encrypted file
   const encryptedFileName = outputPath.includes('/') || outputPath.includes('\\') 
     ? outputPath.split(/[/\\]/).pop() || outputPath
     : outputPath;
-  
-  await promptForGitignore(
-    encryptedFileName,
-    encryptedFileName,
-    `Add ${encryptedFileName} to .gitignore? (recommended to prevent committing encrypted keys)`
-  );
+  filesToCheck.push({
+    name: encryptedFileName,
+    displayName: encryptedFileName,
+    type: 'encrypted keys',
+  });
+
+  // Check which files are missing from .gitignore
+  const missingFiles = filesToCheck.filter(file => !checkGitignorePattern(file.name));
+
+  // Handle -gi flag
+  if (dotenvxOptions?.gitignore !== undefined && dotenvxOptions.gitignore !== false) {
+    const gitignoreFlag = dotenvxOptions.gitignore;
+    
+    // Check if it's an array with values or just a boolean/empty array
+    if (Array.isArray(gitignoreFlag)) {
+      if (gitignoreFlag.length === 0) {
+        // No args: add all missing files
+        for (const file of missingFiles) {
+          addPatternToGitignore(file.name, gitignorePath);
+          console.log(`✅ Added ${file.displayName} to .gitignore`);
+        }
+      } else {
+        // With args: add only specified patterns
+        for (const pattern of gitignoreFlag) {
+          if (!checkGitignorePattern(pattern)) {
+            addPatternToGitignore(pattern, gitignorePath);
+            console.log(`✅ Added ${pattern} to .gitignore`);
+          }
+        }
+      }
+    } else if (gitignoreFlag === true) {
+      // Boolean true: add all missing files
+      for (const file of missingFiles) {
+        addPatternToGitignore(file.name, gitignorePath);
+        console.log(`✅ Added ${file.displayName} to .gitignore`);
+      }
+    }
+  } else {
+    // No -gi flag: show warnings for missing files
+    for (const file of missingFiles) {
+      console.warn(`⚠️  ${file.displayName} is not in .gitignore (recommended to prevent committing ${file.type})`);
+      console.warn(`   Add it manually or use: vhsm encrypt -gi ${file.name}`);
+    }
+  }
 
   // Step 3: Run dotenvx encrypt to generate/update .env.keys (only after validation)
   // Build dotenvx encrypt arguments
