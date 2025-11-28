@@ -7,6 +7,8 @@ import { SessionCache } from '../cache.js';
 import { runCommand } from './actions/run.js';
 import { decryptCommand } from './actions/decrypt.js';
 import { encryptKey } from './actions/encrypt.js';
+import { getCommand } from './actions/get.js';
+import { setCommand } from './actions/set.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { name?: string; version?: string; description?: string };
@@ -105,6 +107,60 @@ program
   .action(async (options) => {
     try {
       await decryptCommand(options);
+    } catch (error) {
+      const sanitized = sanitizeError(error);
+      console.error(`Error: ${sanitized.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('get')
+  .description('Decrypt dotenvx private key and get environment variable(s)')
+  .argument('[KEY]', 'Environment variable name')
+  .option('-ef, --encrypted-keys-file <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
+  .option('-pw, --password <pass>', 'Password/passphrase for decryption (for testing, password/tpm2 providers only)')
+  .option('-nc, --no-cache', 'Disable session caching')
+  .option('-ct, --cache-timeout <ms>', 'Cache timeout in milliseconds', '3600000')
+  // Pass-through options for dotenvx get
+  .option('-e, --env <strings...>', 'Environment variable(s) set as string (example: "HELLO=World")')
+  .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
+  .option('-fk, --env-keys-file <path>', 'Path to your .env.keys file')
+  .option('-fv, --env-vault-file <paths...>', 'Path(s) to your .env.vault file(s)')
+  .option('-o, --overload', 'Override existing env variables')
+  .option('--strict', 'Process.exit(1) on any errors')
+  .option('--convention <name>', 'Load a .env convention (available: nextjs, flow)')
+  .option('--ignore <errorCodes...>', 'Error code(s) to ignore (example: MISSING_ENV_FILE)')
+  .option('-a, --all', 'Include all machine envs as well')
+  .option('-pp, --pretty-print', 'Pretty print output')
+  .option('--format <type>', 'Format of the output (json, shell, eval)', 'json')
+  .action(async (key: string | undefined, options) => {
+    try {
+      await getCommand({ ...options, key });
+    } catch (error) {
+      const sanitized = sanitizeError(error);
+      console.error(`Error: ${sanitized.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('set')
+  .description('Decrypt dotenvx private key and set environment variable')
+  .argument('<KEY>', 'Environment variable name')
+  .argument('<value>', 'Value to set')
+  .option('-ef, --encrypted-keys-file <path>', 'Path to encrypted private key file', '.env.keys.encrypted')
+  .option('-p, --provider <name>', 'Key decryption provider to use', 'password')
+  .option('-pw, --password <pass>', 'Password/passphrase for decryption (for testing)')
+  .option('-nc, --no-cache', 'Disable session caching')
+  .option('-ct, --cache-timeout <ms>', 'Cache timeout in milliseconds', '3600000')
+  // Pass-through options for dotenvx set
+  .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
+  .option('-fk, --env-keys-file <path>', 'Path to your .env.keys file')
+  .option('--plain', 'Store value as plain text (default: false)')
+  .action(async (key: string, value: string, options) => {
+    try {
+      await setCommand({ ...options, key, value });
     } catch (error) {
       const sanitized = sanitizeError(error);
       console.error(`Error: ${sanitized.message}`);

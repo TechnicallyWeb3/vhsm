@@ -1,0 +1,219 @@
+import { getProvider, getDefaultProvider } from '../../providers/index.js';
+import { SessionCache } from '../../cache.js';
+import { createKeyId, clearString } from '../../security.js';
+import { loadConfig } from '../../config.js';
+import { 
+  loadEncryptedKeyFile, 
+  parseEncryptedKeys, 
+  matchKeysToEnvFiles,
+  spawnDotenvx 
+} from '../utils.js';
+
+// Global session cache instance
+const globalCache = new SessionCache();
+
+/**
+ * Decrypt a key with cache support
+ */
+async function decryptKeyWithCache(
+  encryptedValue: string,
+  providerName: string,
+  password: string | undefined,
+  enableCache: boolean,
+  cacheTimeout: number,
+  keyName?: string
+): Promise<string> {
+  const keyId = createKeyId(encryptedValue);
+  let decryptedValue: string | null = null;
+
+  // Check cache
+  if (enableCache) {
+    globalCache.cleanup();
+    decryptedValue = globalCache.get(keyId);
+  }
+
+  // Decrypt if not cached
+  if (!decryptedValue) {
+    try {
+      // Get the appropriate provider
+      const provider = providerName === 'password' ? getDefaultProvider() : getProvider(providerName);
+      
+      // Build config with password if provided
+      const config = password ? { password } : undefined;
+      decryptedValue = await provider.decrypt(encryptedValue, config);
+      
+      // Cache the decrypted key
+      if (enableCache && decryptedValue) {
+        globalCache.set(keyId, decryptedValue, cacheTimeout);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'DecryptionError') {
+        throw error;
+      }
+      const keyMsg = keyName ? ` for ${keyName}` : '';
+      throw new Error(`Failed to decrypt private key${keyMsg}`);
+    }
+  }
+
+  if (!decryptedValue) {
+    const keyMsg = keyName ? ` for ${keyName}` : '';
+    throw new Error(`Failed to obtain decrypted key${keyMsg}`);
+  }
+
+  return decryptedValue;
+}
+
+export async function getCommand(options: {
+  encryptedKeysFile?: string;
+  password?: string;
+  cache?: boolean;
+  cacheTimeout?: string;
+  // Pass-through options for dotenvx get
+  key?: string;
+  env?: string[];
+  envFile?: string[];
+  envKeysFile?: string;
+  envVaultFile?: string[];
+  overload?: boolean;
+  strict?: boolean;
+  convention?: string;
+  ignore?: string[];
+  all?: boolean;
+  prettyPrint?: boolean;
+  format?: string;
+}) {
+  const config = loadConfig();
+  const enableCache = options.cache !== false && (config.enableCache !== false);
+  const cacheTimeout = options.cacheTimeout 
+    ? parseInt(options.cacheTimeout, 10) 
+    : (config.cacheTimeout || 3600000);
+
+  // Load and parse encrypted key file
+  const keyPath = options.encryptedKeysFile || '.env.keys.encrypted';
+  const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
+  const availableKeys = parseEncryptedKeys(encryptedKeyContent);
+
+  if (availableKeys.length === 0) {
+    throw new Error('No VHSM_PRIVATE_KEY found in encrypted key file');
+  }
+
+  // Determine which keys to decrypt based on the env files passed
+  const envFiles = options.envFile || ['.env'];
+  const keysToProcess = matchKeysToEnvFiles(envFiles, availableKeys);
+
+  if (keysToProcess.length === 0) {
+    throw new Error('No matching encrypted keys found for the specified env files');
+  }
+
+  // Provider is automatically detected from the encrypted key file
+
+  // Decrypt all keys (each key may use a different provider)
+  const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string }> = [];
+
+  for (const keyEntry of keysToProcess) {
+    const decryptedValue = await decryptKeyWithCache(
+      keyEntry.encryptedValue,
+      keyEntry.provider,
+      options.password,
+      enableCache,
+      cacheTimeout,
+      keyEntry.vhsmKey
+    );
+
+    decryptedKeys.push({
+      dotenvKey: keyEntry.dotenvKey,
+      decryptedValue,
+    });
+  }
+
+  // Prepare environment with decrypted keys
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+  };
+  
+  for (const key of decryptedKeys) {
+    env[key.dotenvKey] = key.decryptedValue;
+  }
+
+  // Build dotenvx get arguments
+  const dotenvxArgs: string[] = ['get'];
+  
+  // Add KEY argument if provided
+  if (options.key) {
+    dotenvxArgs.push(options.key);
+  }
+  
+  // Add pass-through options
+  if (options.env && options.env.length > 0) {
+    dotenvxArgs.push('-e', ...options.env);
+  }
+  
+  if (options.envFile && options.envFile.length > 0) {
+    dotenvxArgs.push('-f', ...options.envFile);
+  }
+  
+  if (options.envKeysFile) {
+    dotenvxArgs.push('-fk', options.envKeysFile);
+  }
+  
+  if (options.envVaultFile && options.envVaultFile.length > 0) {
+    dotenvxArgs.push('-fv', ...options.envVaultFile);
+  }
+  
+  if (options.overload) {
+    dotenvxArgs.push('-o');
+  }
+  
+  if (options.strict) {
+    dotenvxArgs.push('--strict');
+  }
+  
+  if (options.convention) {
+    dotenvxArgs.push('--convention', options.convention);
+  }
+  
+  if (options.ignore && options.ignore.length > 0) {
+    dotenvxArgs.push('--ignore', ...options.ignore);
+  }
+  
+  if (options.all) {
+    dotenvxArgs.push('-a');
+  }
+  
+  if (options.prettyPrint) {
+    dotenvxArgs.push('-pp');
+  }
+  
+  if (options.format) {
+    dotenvxArgs.push('--format', options.format);
+  }
+
+  // Spawn dotenvx get
+  const child = spawnDotenvx(dotenvxArgs, {
+    stdio: 'inherit',
+    env,
+    shell: process.platform === 'win32',
+  });
+
+  // Clear decrypted keys from memory
+  setTimeout(() => {
+    for (const key of decryptedKeys) {
+      clearString(key.decryptedValue);
+    }
+  }, 100);
+
+  // Wait for child process to exit
+  const exitCode = await new Promise<number>((resolve) => {
+    child.on('exit', (code) => {
+      resolve(code ?? 0);
+    });
+    
+    child.on('error', (error) => {
+      console.error(`Failed to spawn dotenvx: ${error.message}`);
+      resolve(1);
+    });
+  });
+
+  process.exit(exitCode);
+}
+
