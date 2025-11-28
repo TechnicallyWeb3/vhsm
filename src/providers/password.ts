@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import type { KeyDecryptionProvider } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
 import { DecryptionError } from '../types.js';
 import inquirer from 'inquirer';
 import argon2 from 'argon2';
@@ -51,14 +51,110 @@ async function deriveKey(
  * Uses AES-256-GCM for encryption/decryption
  * Supports Argon2id (default) and SHA256 (legacy) key derivation
  */
-export class PasswordProvider implements KeyDecryptionProvider {
+export class PasswordProvider implements Provider, KeyDecryptionProvider {
   readonly name = 'password';
   readonly requiresInteraction = true;
 
   /**
-   * Decrypts the encrypted key using a password prompt or provided password
+   * Encrypts a plaintext key using password-based encryption
    */
-  async decrypt(encryptedKey: string, providedPassword?: string): Promise<string> {
+  async encrypt(plaintextKey: string, config?: ProviderConfig): Promise<string> {
+    const password = config?.password;
+    if (!password) {
+      throw new Error('Password is required for encryption');
+    }
+    if (password.length < 8) {
+      throw new Error('Passphrase must be at least 8 characters');
+    }
+    
+    return encryptKeyWithPassword(plaintextKey, password);
+  }
+
+  /**
+   * Validates password before encryption
+   */
+  async validateEncryption(
+    config?: ProviderConfig,
+    existingKeys?: Array<{ provider: string; encryptedValue: string }>
+  ): Promise<ProviderConfig | void> {
+    const providedPassword = config?.password;
+    const existingPasswordKeys = existingKeys?.filter(k => k.provider === 'password') || [];
+    
+    if (providedPassword) {
+      if (providedPassword.length < 8) {
+        throw new Error('Passphrase must be at least 8 characters');
+      }
+      
+      // If there are existing keys, validate password against them
+      if (existingPasswordKeys.length > 0) {
+        try {
+          await this.decrypt(existingPasswordKeys[0].encryptedValue, providedPassword);
+        } catch (error) {
+          throw new Error('Password does not match existing keys');
+        }
+      }
+      
+      // Test encrypt with dummy data
+      await encryptKeyWithPassword('test-validation', providedPassword);
+      return { password: providedPassword };
+    } else {
+      // No password provided - will prompt during encryption
+      if (existingPasswordKeys.length > 0) {
+        // Need to validate against existing keys
+        const inquirer = (await import('inquirer')).default;
+        let passwordValid = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+        let validatedPassword: string | undefined;
+        
+        while (!passwordValid && attempts < maxAttempts) {
+          const passwordPrompt = await inquirer.prompt([
+            {
+              type: 'password',
+              name: 'password',
+              message: 'Enter passphrase to validate (must match existing keys):',
+              mask: '*',
+              validate: (input: string) => {
+                if (!input || input.length === 0) {
+                  return 'Passphrase cannot be empty';
+                }
+                return true;
+              },
+            },
+          ]);
+          
+          try {
+            await this.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
+            validatedPassword = passwordPrompt.password;
+            passwordValid = true;
+            console.log('✅ Password validated against existing keys.');
+          } catch (error) {
+            attempts++;
+            if (attempts < maxAttempts) {
+              console.error(`❌ Password does not match existing keys. ${maxAttempts - attempts} attempt(s) remaining.`);
+            } else {
+              throw new Error('Password validation failed. Maximum attempts reached.');
+            }
+          }
+        }
+        
+        return { password: validatedPassword };
+      } else {
+        // No existing keys - will prompt for new password during encryption
+        return undefined;
+      }
+    }
+  }
+
+  /**
+   * Decrypts the encrypted key using a password prompt or provided password
+   * Supports both legacy interface (string password) and new interface (ProviderConfig)
+   */
+  async decrypt(encryptedKey: string, configOrPassword?: ProviderConfig | string): Promise<string> {
+    // Support both old interface (string) and new interface (ProviderConfig)
+    const providedPassword = typeof configOrPassword === 'string' 
+      ? configOrPassword 
+      : configOrPassword?.password;
     try {
       // Parse the encrypted key format
       // Old format (4 parts): salt:iv:tag:encryptedData (all base64) - uses SHA256
@@ -150,6 +246,7 @@ export class PasswordProvider implements KeyDecryptionProvider {
  * Utility function to encrypt a key with a password
  * This is useful for initial setup
  * Uses Argon2id by default for secure key derivation
+ * @deprecated Use PasswordProvider.encrypt() instead
  */
 export async function encryptKeyWithPassword(
   plaintextKey: string,

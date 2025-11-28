@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import type { KeyDecryptionProvider } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
 import { DecryptionError } from '../types.js';
 import { Fido2Lib } from 'fido2-lib';
 
@@ -20,7 +20,7 @@ const VERSION = pkg.version || '0.0.0';
  * - Starts a temporary local web server for WebAuthn authentication
  * - Uses FIDO2 credential for key derivation
  */
-export class FIDO2Provider implements KeyDecryptionProvider {
+export class FIDO2Provider implements Provider, KeyDecryptionProvider {
   readonly name = 'fido2';
   readonly requiresInteraction = true;
   
@@ -45,8 +45,9 @@ export class FIDO2Provider implements KeyDecryptionProvider {
    * Encrypts data using FIDO2-derived key
    * This creates a credential and derives an encryption key from it
    */
-  async encrypt(data: string, credentialId?: string): Promise<string> {
+  async encrypt(plaintextKey: string, config?: ProviderConfig): Promise<string> {
     try {
+      const credentialId = config?.credentialId as string | undefined;
       let derivedKey: Buffer;
       let storedCredId: string;
 
@@ -66,7 +67,7 @@ export class FIDO2Provider implements KeyDecryptionProvider {
       const iv = randomBytes(16);
       const cipher = createCipheriv('aes-256-gcm', derivedKey, iv);
       
-      let encrypted = cipher.update(data, 'utf8', 'hex');
+      let encrypted = cipher.update(plaintextKey, 'utf8', 'hex');
       encrypted += cipher.final('hex');
       
       const authTag = cipher.getAuthTag();
@@ -84,10 +85,54 @@ export class FIDO2Provider implements KeyDecryptionProvider {
   }
 
   /**
+   * Validates FIDO2 credential before encryption
+   */
+  async validateEncryption(
+    config?: ProviderConfig,
+    existingKeys?: Array<{ provider: string; encryptedValue: string }>
+  ): Promise<ProviderConfig | void> {
+    const credentialId = config?.credentialId as string | undefined;
+    const existingFido2Keys = existingKeys?.filter(k => k.provider === 'fido2') || [];
+    
+    if (existingFido2Keys.length > 0 && credentialId) {
+      // Extract credential ID from existing key
+      const existingCredId = existingFido2Keys[0].encryptedValue.split(':')[0];
+      if (existingCredId !== credentialId) {
+        throw new Error('Credential ID mismatch with existing keys');
+      }
+      
+      console.log('Validating FIDO2 credential...');
+      // Test encrypt with dummy data to ensure credential is usable
+      try {
+        await this.encrypt('test-validation', { credentialId });
+        console.log('✅ FIDO2 credential validated.');
+      } catch (error) {
+        throw new Error(`FIDO2 credential validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      return { credentialId };
+    } else if (existingFido2Keys.length === 0) {
+      // Need to create new credential - do it NOW before dotenvx
+      console.log('Creating FIDO2 credential (this will open a browser window)...');
+      console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
+      try {
+        // Create credential with test data
+        const testEncrypted = await this.encrypt('test-validation');
+        const newCredentialId = testEncrypted.split(':')[0];
+        console.log('✅ FIDO2 credential created and validated.');
+        return { credentialId: newCredentialId };
+      } catch (error) {
+        throw new Error(`FIDO2 credential creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    return config;
+  }
+
+  /**
    * Decrypts the encrypted key using FIDO2 authentication
    * Format: credentialId:iv:authTag:encryptedData
    */
-  async decrypt(encryptedKey: string): Promise<string> {
+  async decrypt(encryptedKey: string, _config?: ProviderConfig): Promise<string> {
     try {
       // Parse the encrypted key
       const parts = encryptedKey.split(':');
@@ -810,10 +855,11 @@ export class FIDO2Provider implements KeyDecryptionProvider {
 
 /**
  * Encrypts a dotenvx private key using FIDO2
+ * @deprecated Use FIDO2Provider.encrypt() instead
  */
 export async function encryptKeyWithFIDO2(privateKey: string, credentialId?: string): Promise<string> {
   const provider = new FIDO2Provider();
-  return await provider.encrypt(privateKey, credentialId);
+  return await provider.encrypt(privateKey, { credentialId });
 }
 
 /**

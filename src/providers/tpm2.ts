@@ -3,7 +3,7 @@ import { platform } from 'node:os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { KeyDecryptionProvider } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
 import { DecryptionError } from '../types.js';
 
 /**
@@ -17,7 +17,7 @@ import { DecryptionError } from '../types.js';
  * 
  * Note: tpm2-tools is Linux/macOS only. For Windows testing, use Docker with a Linux container.
  */
-export class TPM2Provider implements KeyDecryptionProvider {
+export class TPM2Provider implements Provider, KeyDecryptionProvider {
   readonly name = 'tpm2';
   readonly requiresInteraction = true; // Requires PIN/auth on decrypt
 
@@ -93,7 +93,8 @@ export class TPM2Provider implements KeyDecryptionProvider {
    * Sealed data can only be unsealed by the same TPM
    * Returns base64-encoded sealed blob
    */
-  encrypt(data: string, authPassword?: string): string {
+  encrypt(plaintextKey: string, config?: ProviderConfig): string {
+    const authPassword = config?.authPassword as string | undefined;
     try {
       const primaryCtx = this.getPrimaryKeyHandle();
       const dataFile = join(this.tpmDir, `seal-data-${Date.now()}.txt`);
@@ -103,7 +104,7 @@ export class TPM2Provider implements KeyDecryptionProvider {
 
       try {
         // Write data to temp file
-        writeFileSync(dataFile, data, { mode: 0o600 });
+        writeFileSync(dataFile, plaintextKey, { mode: 0o600 });
 
         // Create sealing object with optional auth
         // The -p option sets the authorization value (password) for the sealed object
@@ -156,11 +157,32 @@ export class TPM2Provider implements KeyDecryptionProvider {
   }
 
   /**
+   * Validates TPM2 before encryption
+   */
+  async validateEncryption(config?: ProviderConfig): Promise<ProviderConfig | void> {
+    const authPassword = config?.authPassword as string | undefined;
+    
+    // Test encrypt with dummy data
+    try {
+      this.encrypt('test-validation', { authPassword });
+      console.log('✅ TPM2 validated.');
+    } catch (error) {
+      throw new Error(`TPM2 validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+    
+    return config;
+  }
+
+  /**
    * Decrypts the sealed data using TPM unseal operation
    * Requires the same TPM that sealed the data
    * May require user authentication depending on how it was sealed
    */
-  async decrypt(encryptedKey: string, authPassword?: string): Promise<string> {
+  async decrypt(encryptedKey: string, configOrPassword?: ProviderConfig | string): Promise<string> {
+    // Support both old interface (string) and new interface (ProviderConfig)
+    const authPassword = typeof configOrPassword === 'string' 
+      ? configOrPassword 
+      : configOrPassword?.authPassword as string | undefined;
     try {
       const primaryCtx = this.getPrimaryKeyHandle();
       
@@ -241,10 +263,11 @@ export class TPM2Provider implements KeyDecryptionProvider {
 /**
  * Encrypts a dotenvx private key using TPM2
  * This is used by the encrypt command to create TPM2-sealed keys
+ * @deprecated Use TPM2Provider.encrypt() instead
  */
 export function encryptKeyWithTPM2(privateKey: string, authPassword?: string): string {
   const provider = new TPM2Provider();
-  return provider.encrypt(privateKey, authPassword);
+  return provider.encrypt(privateKey, { authPassword });
 }
 
 /**

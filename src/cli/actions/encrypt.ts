@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { loadConfig } from '../../config.js';
-import { listProviders } from '../../providers/index.js';
+import { listProviders, getProvider } from '../../providers/index.js';
+import type { ProviderConfig } from '../../types.js';
 import { 
   parseEncryptedKeys,
   spawnDotenvx,
@@ -22,8 +23,6 @@ export async function encryptKey(
     gitignore?: string[] | boolean;
   }
 ) {
-  const inquirer = (await import('inquirer')).default;
-  
   // Validate provider
   const config = loadConfig();
   const availableProviders = listProviders();
@@ -70,192 +69,28 @@ export async function encryptKey(
 
   // Step 2: Validate encryption will succeed BEFORE running dotenvx encrypt
   // This ensures we don't create .env.keys if encryption will fail
-  let validatedCredentialId: string | undefined;
-  let validatedPassword: string | undefined;
+  // Use the unified provider interface for validation
+  const provider = getProvider(providerName);
+  let validatedConfig: ProviderConfig | undefined;
   
-  if (providerName === 'fido2') {
-    // For FIDO2, validate credential creation/reuse BEFORE dotenvx
-    const { encryptKeyWithFIDO2 } = await import('../../providers/fido2.js');
-    
-    const existingFido2Keys = existingKeys.filter(k => k.provider === 'fido2');
-    if (existingFido2Keys.length > 0) {
-      // Extract credential ID from existing key
-      validatedCredentialId = existingFido2Keys[0].encryptedValue.split(':')[0];
-      console.log('Validating FIDO2 credential...');
-      // Test encrypt with dummy data to ensure credential is usable
-      try {
-        await encryptKeyWithFIDO2('test-validation', validatedCredentialId);
-        console.log('✅ FIDO2 credential validated.');
-      } catch (error) {
-        throw new Error(`FIDO2 credential validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    } else {
-      // Need to create new credential - do it NOW before dotenvx
-      console.log('Creating FIDO2 credential (this will open a browser window)...');
-      console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
-      try {
-        // Create credential with test data
-        const testEncrypted = await encryptKeyWithFIDO2('test-validation');
-        validatedCredentialId = testEncrypted.split(':')[0];
-        console.log('✅ FIDO2 credential created and validated.');
-      } catch (error) {
-        throw new Error(`FIDO2 credential creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
+  // Build initial config from provided options
+  const initialConfig: ProviderConfig = {};
+  if (providedPassword && (providerName === 'password' || providerName === 'tpm2')) {
+    initialConfig.password = providedPassword;
+    if (providerName === 'tpm2') {
+      initialConfig.authPassword = providedPassword;
     }
-  } else if (providerName === 'password') {
-    // For password, prompt and validate BEFORE dotenvx
-    const { encryptKeyWithPassword, PasswordProvider } = await import('../../providers/password.js');
-    const passwordProvider = new PasswordProvider();
-    
-    if (providedPassword) {
-      validatedPassword = providedPassword;
-      if (validatedPassword.length < 8) {
-        throw new Error('Passphrase must be at least 8 characters');
-      }
-    } else {
-      // Check if there are existing password-encrypted keys
-      const existingPasswordKeys = existingKeys.filter(k => k.provider === 'password');
-      
-      if (existingPasswordKeys.length > 0) {
-        // Validate password against existing key
-        console.log('Existing encrypted keys found. Please enter the same passphrase to add a new key.');
-        let passwordValid = false;
-        let attempts = 0;
-        const maxAttempts = 3;
-        
-        while (!passwordValid && attempts < maxAttempts) {
-          const passwordPrompt = await inquirer.prompt([
-            {
-              type: 'password',
-              name: 'password',
-              message: 'Enter passphrase to validate (must match existing keys):',
-              mask: '*',
-              validate: (input: string) => {
-                if (!input || input.length === 0) {
-                  return 'Passphrase cannot be empty';
-                }
-                return true;
-              },
-            },
-          ]);
-          
-          // Try to decrypt an existing key to validate the password
-          try {
-            await passwordProvider.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
-            validatedPassword = passwordPrompt.password;
-            passwordValid = true;
-            console.log('✅ Password validated against existing keys.');
-          } catch (error) {
-            attempts++;
-            if (attempts < maxAttempts) {
-              console.error(`❌ Password does not match existing keys. ${maxAttempts - attempts} attempt(s) remaining.`);
-            } else {
-              throw new Error('Password validation failed. Maximum attempts reached.');
-            }
-          }
-        }
-      } else {
-        // No existing keys, prompt for new password with confirmation
-        const prompts = await inquirer.prompt([
-          {
-            type: 'password',
-            name: 'password',
-            message: 'Enter passphrase to encrypt the key:',
-            mask: '*',
-            validate: (input: string) => {
-              if (!input || input.length < 8) {
-                return 'Passphrase must be at least 8 characters';
-              }
-              return true;
-            },
-          },
-          {
-            type: 'password',
-            name: 'confirmPassword',
-            message: 'Confirm passphrase:',
-            mask: '*',
-            validate: (input: string, answers: any) => {
-              if (input !== answers.password) {
-                return 'Passphrases do not match';
-              }
-              return true;
-            },
-          },
-        ]);
-        validatedPassword = prompts.password;
-      }
-    }
-    
-    // Test encrypt with dummy data to validate password works
+  }
+  
+  // Validate encryption using provider's validateEncryption method
+  if (provider.validateEncryption) {
     try {
-      await encryptKeyWithPassword('test-validation', validatedPassword!);
-      if (existingKeys.length === 0) {
-        console.log('✅ Password validated.');
-      }
+      validatedConfig = await provider.validateEncryption(initialConfig, existingKeys) as ProviderConfig | undefined;
     } catch (error) {
-      throw new Error(`Password validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Provider validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  } else if (providerName === 'tpm2') {
-    // For TPM2, prompt for password if needed BEFORE dotenvx
-    if (providedPassword) {
-      validatedPassword = providedPassword;
-      if (validatedPassword.length < 8) {
-        throw new Error('TPM2 auth passphrase must be at least 8 characters');
-      }
-    } else {
-      // Ask if user wants to set auth password
-      const authPrompt = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'useAuth',
-          message: 'Set authorization password for TPM2 seal? (Recommended for extra security)',
-          default: true,
-        },
-      ]);
-
-      if (authPrompt.useAuth) {
-        const prompts = await inquirer.prompt([
-          {
-            type: 'password',
-            name: 'password',
-            message: 'Enter TPM2 authorization password:',
-            mask: '*',
-            validate: (input: string) => {
-              if (!input || input.length < 8) {
-                return 'Password must be at least 8 characters';
-              }
-              return true;
-            },
-          },
-          {
-            type: 'password',
-            name: 'confirmPassword',
-            message: 'Confirm password:',
-            mask: '*',
-            validate: (input: string, answers: any) => {
-              if (input !== answers.password) {
-                return 'Passwords do not match';
-              }
-              return true;
-            },
-          },
-        ]);
-        validatedPassword = prompts.password;
-      }
-    }
-    
-    // Test encrypt with dummy data to validate TPM2 works
-    const { encryptKeyWithTPM2 } = await import('../../providers/tpm2.js');
-    try {
-      encryptKeyWithTPM2('test-validation', validatedPassword);
-      console.log('✅ TPM2 validated.');
-    } catch (error) {
-      throw new Error(`TPM2 validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  } else if (providerName === 'dpapi') {
-    // DPAPI doesn't need validation - it always works on Windows
-    // (Already checked platform in provider check)
-    console.log('✅ DPAPI ready.');
+  } else {
+    validatedConfig = initialConfig;
   }
 
   // Step 2.5: Check and optionally add files to .gitignore
@@ -450,84 +285,36 @@ export async function encryptKey(
     }
   }
 
-  if (providerName === 'dpapi') {
-    // DPAPI encryption - no password needed
-    const { encryptKeyWithDPAPI } = await import('../../providers/dpapi.js');
-    
-    console.log('Encrypting keys with Windows DPAPI...');
-    for (const [i, key] of keyValues.entries()) {
-      const encrypted = encryptKeyWithDPAPI(key);
-      const encapsulatedKey = `${keyKeys[i].replace('DOTENV_', 'VHSM_')}=dpapi:${encrypted}`;
+  // Encrypt using the unified provider interface
+  console.log(`Encrypting keys with ${providerName}...`);
+  
+  // Determine provider prefix for the output format
+  const providerPrefix = providerName === 'password' ? 'encrypted' : providerName;
+  
+  // Filter to only encrypt keys that don't already exist
+  const keysToEncrypt: Array<{ index: number; key: string; vhsmKey: string }> = [];
+  for (const [i, key] of keyValues.entries()) {
+    const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
+    if (!outputContent.includes(`${vhsmKey}=`)) {
+      keysToEncrypt.push({ index: i, key, vhsmKey });
+    }
+  }
+  
+  if (keysToEncrypt.length === 0) {
+    console.log('✅ All keys already encrypted. Skipping.');
+  } else {
+    for (const { index, key, vhsmKey } of keysToEncrypt) {
+      console.log(`Encrypting key ${index + 1}/${keyValues.length}: ${keyKeys[index]}...`);
+      
+      // Use the unified provider interface
+      const encrypted = await provider.encrypt(key, validatedConfig);
+      const encapsulatedKey = `${vhsmKey}=${providerPrefix}:${encrypted}`;
       outputContent += `\n${encapsulatedKey}`;
     }
-  } else if (providerName === 'fido2') {
-    // FIDO2 encryption - credential already validated and created if needed
-    const { encryptKeyWithFIDO2 } = await import('../../providers/fido2.js');
     
-    console.log('Encrypting keys with FIDO2/Yubikey...');
-    if (validatedCredentialId) {
-      console.log(`Using validated FIDO2 credential.`);
+    if (keysToEncrypt.length > 1) {
+      console.log(`\n✅ All ${keysToEncrypt.length} key(s) encrypted.`);
     }
-    
-    // Filter to only encrypt keys that don't already exist
-    const keysToEncrypt: Array<{ index: number; key: string; vhsmKey: string }> = [];
-    for (const [i, key] of keyValues.entries()) {
-      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
-      if (!outputContent.includes(`${vhsmKey}=`)) {
-        keysToEncrypt.push({ index: i, key, vhsmKey });
-      }
-    }
-    
-    if (keysToEncrypt.length === 0) {
-      console.log('✅ All keys already encrypted. Skipping.');
-    } else {
-      for (const [idx, { index, key, vhsmKey }] of keysToEncrypt.entries()) {
-        console.log(`Encrypting key ${index + 1}/${keyValues.length}: ${keyKeys[index]}...`);
-        // Use the validated credential ID (already created/validated before dotenvx)
-        const encrypted = await encryptKeyWithFIDO2(key, validatedCredentialId);
-        const encapsulatedKey = `${vhsmKey}=fido2:${encrypted}`;
-        outputContent += `\n${encapsulatedKey}`;
-      }
-      
-      console.log(`\n✅ All ${keysToEncrypt.length} key(s) encrypted with the same FIDO2 credential.`);
-    }
-  } else if (providerName === 'tpm2') {
-    // TPM2 encryption - password already validated before dotenvx
-    const { encryptKeyWithTPM2 } = await import('../../providers/tpm2.js');
-    
-    console.log('Encrypting keys with TPM2...');
-    if (validatedPassword) {
-      console.log('Using validated TPM2 authorization.');
-    } else {
-      console.log('Using TPM2 hardware-only (no authorization).');
-    }
-
-    for (const [i, key] of keyValues.entries()) {
-      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
-      // Only encrypt if this key doesn't already exist in the output
-      if (!outputContent.includes(`${vhsmKey}=`)) {
-        const encrypted = encryptKeyWithTPM2(key, validatedPassword);
-        const encapsulatedKey = `${vhsmKey}=tpm2:${encrypted}`;
-        outputContent += `\n${encapsulatedKey}`;
-      }
-    }
-  } else if (providerName === 'password') {
-    // Password-based encryption - password already validated before dotenvx
-    const { encryptKeyWithPassword } = await import('../../providers/password.js');
-    
-    console.log('Encrypting keys with password (using Argon2id)...');
-
-    for (const [i, key] of keyValues.entries()) {
-      const vhsmKey = keyKeys[i].replace('DOTENV_', 'VHSM_');
-      // Only encrypt if this key doesn't already exist in the output
-      if (!outputContent.includes(`${vhsmKey}=`)) {
-        const encrypted = await encryptKeyWithPassword(key, validatedPassword!);
-        const encapsulatedKey = `${vhsmKey}=encrypted:${encrypted}`;
-        outputContent += `\n${encapsulatedKey}`;
-      }
-    }
-  } else {
-    throw new Error(`Unsupported encryption provider: ${providerName}`);
   }
 
   // Write to file

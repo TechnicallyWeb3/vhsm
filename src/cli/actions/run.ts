@@ -38,12 +38,9 @@ async function decryptKeyWithCache(
       // Get the appropriate provider
       const provider = providerName === 'password' ? getDefaultProvider() : getProvider(providerName);
       
-      // Pass password to provider if provided and it supports password parameter
-      if (password && (provider.name === 'password' || provider.name === 'tpm2')) {
-        decryptedValue = await (provider as any).decrypt(encryptedValue, password);
-      } else {
-        decryptedValue = await provider.decrypt(encryptedValue);
-      }
+      // Build config with password if provided
+      const config = password ? { password } : undefined;
+      decryptedValue = await provider.decrypt(encryptedValue, config);
       
       // Cache the decrypted key
       if (enableCache && decryptedValue) {
