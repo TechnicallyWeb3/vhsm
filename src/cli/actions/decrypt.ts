@@ -99,6 +99,27 @@ export async function decryptCommand(options: {
 
   // Handle remove option with -k or -ek flags
   let finalOptions = { ...options };
+  
+  // Handle remove option with key-only flag (without restore)
+  if (options.remove && options.keyOnly && !options.restore) {
+    const inquirer = (await import('inquirer')).default;
+    console.warn('\n⚠️  WARNING: Using --remove with --key-only without --restore will cause loss of your decrypted keys!');
+    console.warn('   The keys will be output to stdout but then removed from files.');
+    
+    const answer = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'proceed',
+        message: 'Proceed without saving keys to file? (y/n)',
+        default: false,
+      },
+    ]);
+    
+    if (!answer.proceed) {
+      console.log('Removing --remove flag and adding --restore to save keys to file.');
+      finalOptions = { ...options, restore: true, remove: false };
+    }
+  }
   if (options.remove && (options.key || options.excludeKey)) {
     const inquirer = (await import('inquirer')).default;
     console.warn('\n⚠️  WARNING: Using --remove with -k/--key or -ek/--exclude-key flags will cause loss of secrets!');
@@ -243,7 +264,53 @@ export async function decryptCommand(options: {
 
   // If --key-only is set, skip dotenvx decrypt and exit early
   if (finalOptions.keyOnly) {
-    console.log('✅ Decrypted private keys only (env vars not decrypted)');
+    // If --restore is not set, output keys to stdout
+    if (!finalOptions.restore) {
+      for (const key of decryptedKeys) {
+        process.stdout.write(`${key.dotenvKey}=${key.decryptedValue}\n`);
+      }
+      console.error('\n💡 Tip: Use --restore to save keys to a file instead of stdout');
+    } else {
+      console.log('✅ Decrypted private keys only (env vars not decrypted)');
+    }
+    
+    // If --remove is specified, remove keys from files
+    if (finalOptions.remove) {
+      const dotenvKeysToRemove = decryptedKeys.map(k => k.dotenvKey);
+      const vhsmKeysToRemove = decryptedKeys.map(k => k.vhsmKey);
+      
+      const keysFilePath = finalOptions.envKeysFile || '.env.keys';
+      const encryptedFilePath = finalOptions.encryptedKeysFile || '.env.keys.encrypted';
+      
+      // Remove from .env.keys file
+      const keysResult = removeKeysFromDotenvKeysFile(keysFilePath, dotenvKeysToRemove);
+      if (keysResult.removed) {
+        if (keysResult.shouldDelete) {
+          console.log(`✅ Removed keys and deleted ${keysFilePath} (no keys remaining)`);
+        } else {
+          console.log(`✅ Removed keys from ${keysFilePath}`);
+        }
+      }
+      
+      // Remove from .env.keys.encrypted file
+      const encryptedResult = removeKeysFromEncryptedFile(encryptedFilePath, vhsmKeysToRemove);
+      if (encryptedResult.removed) {
+        if (encryptedResult.shouldDelete) {
+          console.log(`✅ Removed keys and deleted ${encryptedFilePath} (no keys remaining)`);
+        } else {
+          console.log(`✅ Removed keys from ${encryptedFilePath}`);
+        }
+      }
+      
+      // Remove header, public key, and filename comment from .env files
+      const envFiles = finalOptions.envFile || ['.env'];
+      for (const envFile of envFiles) {
+        const envResult = removeHeaderAndPublicKeyFromEnvFile(envFile);
+        if (envResult.removed) {
+          console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
+        }
+      }
+    }
     
     // Clear decrypted keys from memory
     setTimeout(() => {
