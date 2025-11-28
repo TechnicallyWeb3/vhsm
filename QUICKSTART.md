@@ -209,6 +209,85 @@ vhsm decrypt --restore
 
 ---
 
+## Programmatic Usage with `vhsm.exec()`
+
+vhsm also provides a powerful programmatic API for executing functions with automatic environment variable injection.
+
+**⚠️ Security Note**: `vhsm.exec()` is **disabled by default** for security. You must enable it first:
+
+```bash
+export VHSM_ALLOW_EXEC=true
+```
+
+Or add to `.vhsmrc.json`:
+```json
+{
+  "allowExec": true
+}
+```
+
+### Basic Example
+
+```typescript
+import { exec } from 'vhsm';
+
+const result = await exec(
+  async ({ message, apiKey }) => {
+    // apiKey is automatically decrypted from .env
+    return signMessage(message, apiKey);
+  },
+  {
+    message: 'Hello, World!',
+    apiKey: '@vhsm API_KEY'  // Automatically decrypted
+  },
+  {
+    encryptedKeysFile: '.env.keys.encrypted',
+    envFile: '.env',
+    password: 'your-passphrase',
+    allowExec: true  // Required if not set globally
+  }
+);
+```
+
+### Nested Execution Example
+
+```typescript
+import { exec } from 'vhsm';
+import { ethers } from 'ethers';
+
+// Load wallet from mnemonic and sign transaction
+const signedTx = await exec(
+  async ({ wallet, to, value }) => {
+    return wallet.signTransaction({ to, value });
+  },
+  {
+    // Nested exec() - loads wallet first
+    wallet: await exec(
+      async ({ mnemonic }) => {
+        return ethers.Wallet.fromPhrase(mnemonic);
+      },
+      {
+        mnemonic: '@vhsm CRYPTO_WALLET'
+      },
+      { allowExec: true }
+    ),
+    to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb5',
+    value: ethers.parseEther('0.1')
+  },
+  { allowExec: true }
+);
+```
+
+**Key Features:**
+- `@vhsm KEY` syntax automatically decrypts env variables
+- Nested execution for complex workflows
+- Automatic memory cleanup of sensitive data
+- Session caching support
+
+👉 See [`EXEC-FEATURE.md`](./EXEC-FEATURE.md) for complete documentation.
+
+---
+
 ## Complete Examples
 
 ### Password Provider
@@ -371,5 +450,6 @@ This shouldn't happen as vhsm includes dotenvx. If you see this error:
 - See [README.md](./README.md) for advanced configuration and all available providers
 - Check [EXAMPLE.md](./EXAMPLE.md) for more usage examples
 - Read [FIDO2-GUIDE.md](./FIDO2-GUIDE.md) for detailed FIDO2 documentation
+- Explore [EXEC-FEATURE.md](./EXEC-FEATURE.md) for programmatic function execution
 - Try other providers: `vhsm encrypt -p dpapi` (Windows) or `vhsm encrypt -p tpm2` (Linux/macOS)
 

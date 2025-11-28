@@ -43,6 +43,10 @@ export function loadConfig(): VhsmConfig {
     config.enableCache = process.env.VHSM_ENABLE_CACHE === 'true';
   }
 
+  if (process.env.VHSM_ALLOW_EXEC !== undefined) {
+    config.allowExec = process.env.VHSM_ALLOW_EXEC === 'true';
+  }
+
   return config;
 }
 

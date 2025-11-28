@@ -162,6 +162,12 @@ export interface ExecOptions {
    * Custom path to .env.keys file (for dotenvx)
    */
   envKeysFile?: string;
+  
+  /**
+   * Override the global allowExec setting for this execution
+   * If not provided, uses the value from config file or VHSM_ALLOW_EXEC env var
+   */
+  allowExec?: boolean;
 }
 
 /**
@@ -202,12 +208,19 @@ async function processParams(
     
     // Set the decrypted key in environment
     process.env[dotenvKeyName] = decryptedKey;
-
+    
+    // Also set it in a way dotenvx can find it
+    // dotenvx reads from process.env directly for the private key
+    const envFile = options.envFile || '.env';
+    
     // Create a custom processEnv object to load decrypted env variables
-    const processEnv: Record<string, string> = {};
+    // Start with a copy of current process.env so dotenvx can find DOTENV_PRIVATE_KEY
+    const processEnv: Record<string, string> = { ...process.env as Record<string, string> };
+    
+    // Ensure the private key is in the processEnv object (dotenvx reads from processEnv when provided)
+    processEnv[dotenvKeyName] = decryptedKey;
     
     // Load all env variables from the .env file using dotenvx
-    const envFile = options.envFile || '.env';
     const configOptions = {
       path: envFile,
       processEnv: processEnv,
@@ -238,6 +251,14 @@ async function processParams(
         // Track sensitive values for cleanup
         if (typeof envValue === 'string') {
           sensitiveValues.push(envValue);
+        }
+      } else if (value instanceof Promise) {
+        // Support nested exec() calls - resolve Promise values
+        const resolvedValue = await value;
+        processed[key] = resolvedValue;
+        // If resolved value is a string, track it for cleanup
+        if (typeof resolvedValue === 'string') {
+          sensitiveValues.push(resolvedValue);
         }
       } else {
         processed[key] = value;
@@ -297,6 +318,18 @@ export async function exec<T extends (...args: any[]) => any>(
   params: Record<string, unknown>,
   options: ExecOptions = {}
 ): Promise<ReturnType<T>> {
+  // Security check: require allowExec to be explicitly enabled
+  const config = loadConfig();
+  const allowExec = options.allowExec ?? config.allowExec ?? false;
+  
+  if (!allowExec) {
+    throw new Error(
+      'vhsm.exec() is disabled by default for security. ' +
+      'To enable, set VHSM_ALLOW_EXEC=true environment variable or ' +
+      'add "allowExec": true to your .vhsmrc.json config file.'
+    );
+  }
+  
   let processedParams: Record<string, unknown> | null = null;
   let result: ReturnType<T>;
   

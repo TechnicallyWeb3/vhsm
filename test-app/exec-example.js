@@ -76,7 +76,9 @@ async function main() {
       },
       {
         encryptedKeysFile: '.env.keys.encrypted',
-        envFile: '.env'
+        envFile: '.env',
+        password: 'password',
+        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     
@@ -95,7 +97,9 @@ async function main() {
       },
       {
         encryptedKeysFile: '.env.keys.encrypted',
-        envFile: '.env'
+        envFile: '.env',
+        password: 'password',
+        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     
@@ -127,7 +131,9 @@ async function main() {
       },
       {
         encryptedKeysFile: '.env.keys.encrypted',
-        envFile: '.env'
+        envFile: '.env',
+        password: 'password',
+        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     

@@ -127,6 +127,13 @@ export interface VhsmConfig {
    * Provider-specific configuration
    */
   providerConfig?: ProviderConfig;
+  
+  /**
+   * Whether to allow exec() function execution
+   * This is a security feature - exec() will throw an error if not explicitly enabled
+   * Default: false (must be explicitly enabled)
+   */
+  allowExec?: boolean;
 }
 
 /**

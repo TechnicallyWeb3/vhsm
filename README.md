@@ -13,6 +13,7 @@
 - 🔑 **Hardware Backed Security**: FIDO2 (Windows Hello, security keys, mobile keys) and TPM2 with beautiful, guided UI
 - 🚫 **No Secret Leakage**: Error handling sanitizes messages to prevent information disclosure
 - 🔧 **Developer-Friendly**: Simple CLI workflow that integrates seamlessly with dotenvx
+- ⚡ **Programmatic Execution**: `vhsm.exec()` allows secure function execution with automatic env variable injection
 
 ## Installation
 
@@ -95,6 +96,7 @@ Create a `.vhsmrc.json` or `.vhsm.json` file in your project root:
   "provider": "password",
   "cacheTimeout": 3600000,
   "enableCache": true,
+  "allowExec": false,
   "providerConfig": {}
 }
 ```
@@ -106,6 +108,7 @@ Environment variable overrides:
 - `VHSM_PROVIDER`: `password`, `dpapi`, or `fido2`
 - `VHSM_CACHE_TIMEOUT`: Milliseconds (default `3600000`)
 - `VHSM_ENABLE_CACHE`: `true` / `false`
+- `VHSM_ALLOW_EXEC`: `true` / `false` - Enable `vhsm.exec()` function (default: `false` for security)
 
 ### Command-Line Options
 
@@ -238,8 +241,10 @@ vhsm uses a pluggable provider architecture. The built-in providers satisfy most
 
 ## Additional Guides
 
+- [`QUICKSTART.md`](./QUICKSTART.md) – Get started quickly with password or FIDO2 providers.
 - [`FIDO2-QUICKSTART.md`](./FIDO2-QUICKSTART.md) – FIDO2 test flow, screenshots, troubleshooting.
 - [`FIDO2-GUIDE.md`](./FIDO2-GUIDE.md) – Deep dive into FIDO2 security model, remote access tips, FAQs.
+- [`EXEC-FEATURE.md`](./EXEC-FEATURE.md) – Complete guide to `vhsm.exec()` programmatic function execution.
 - [`PUBLISHING.md`](./PUBLISHING.md) – Instructions for shipping vhsm to npm.
 
 #### Creating Custom Providers
@@ -372,6 +377,8 @@ export class HSMProvider implements KeyDecryptionProvider {
 
 ### Programmatic Usage
 
+#### Provider API
+
 ```typescript
 import { getProvider, SessionCache, createKeyId } from 'vhsm';
 
@@ -387,6 +394,68 @@ const keyId = createKeyId(encryptedKey);
 cache.set(keyId, decrypted);
 const cached = cache.get(keyId);
 ```
+
+#### Secure Function Execution (`vhsm.exec()`)
+
+`vhsm.exec()` allows you to execute functions with automatic decryption and injection of environment variables. **This feature is disabled by default for security** - you must explicitly enable it.
+
+**Enable exec():**
+
+1. Environment variable: `export VHSM_ALLOW_EXEC=true`
+2. Config file: Add `"allowExec": true` to `.vhsmrc.json`
+3. Per-execution: Pass `allowExec: true` in options
+
+**Basic Example:**
+
+```typescript
+import { exec } from 'vhsm';
+
+// Enable exec() first (one of the methods above)
+const result = await exec(
+  async ({ message, apiKey }) => {
+    // apiKey is automatically decrypted from @vhsm API_KEY
+    return signMessage(message, apiKey);
+  },
+  {
+    message: 'Hello, World!',
+    apiKey: '@vhsm API_KEY'  // Automatically decrypted from .env
+  },
+  {
+    encryptedKeysFile: '.env.keys.encrypted',
+    envFile: '.env',
+    allowExec: true  // Required if not set globally
+  }
+);
+```
+
+**Nested Execution:**
+
+```typescript
+// exec() calls can be nested - useful for loading wallets, signing transactions, etc.
+const result = await exec(
+  async ({ wallet }) => {
+    // wallet is loaded via nested exec()
+    return wallet.signTransaction(tx);
+  },
+  {
+    wallet: await exec(
+      loadWallet,
+      { mnemonic: '@vhsm CRYPTO_WALLET' },
+      { allowExec: true }
+    )
+  },
+  { allowExec: true }
+);
+```
+
+**Features:**
+- ✅ Automatic env variable decryption and injection
+- ✅ Memory cleanup of sensitive data after execution
+- ✅ Nested/recursive execution support
+- ✅ Session caching support
+- ✅ Security gate (disabled by default)
+
+👉 See [`EXEC-FEATURE.md`](./EXEC-FEATURE.md) for complete documentation and examples.
 
 ## Test Application
 

@@ -4,6 +4,11 @@
 
 The `vhsm.exec()` function is a powerful feature that allows you to execute functions with automatic decryption and injection of environment variables. This enables you to securely use encrypted environment variables in your code without exposing them to memory longer than necessary.
 
+**⚠️ Security Note**: `vhsm.exec()` is **disabled by default** for security. You must explicitly enable it via:
+- Environment variable: `VHSM_ALLOW_EXEC=true`
+- Config file: Add `"allowExec": true` to `.vhsmrc.json`
+- Per-execution: Pass `allowExec: true` in options
+
 ## Features
 
 - ✅ Automatic decryption of vHSM-encrypted dotenvx keys
@@ -96,7 +101,41 @@ interface ExecOptions {
    * Custom path to .env.keys file (for dotenvx)
    */
   envKeysFile?: string;
+  
+  /**
+   * Override the global allowExec setting for this execution
+   * If not provided, uses the value from config file or VHSM_ALLOW_EXEC env var
+   * Default: false (must be explicitly enabled for security)
+   */
+  allowExec?: boolean;
 }
+```
+
+### Security Configuration
+
+`vhsm.exec()` requires explicit opt-in for security. Enable it using one of these methods:
+
+**1. Environment Variable (recommended for CI/CD)**
+```bash
+export VHSM_ALLOW_EXEC=true
+```
+
+**2. Config File (`.vhsmrc.json` in project root or home directory)**
+```json
+{
+  "allowExec": true
+}
+```
+
+**3. Per-Execution Override**
+```typescript
+await exec(myFunction, params, { allowExec: true });
+```
+
+If `allowExec` is not enabled, `exec()` will throw an error:
+```
+vhsm.exec() is disabled by default for security. To enable, set VHSM_ALLOW_EXEC=true 
+environment variable or add "allowExec": true to your .vhsmrc.json config file.
 ```
 
 ### Examples
