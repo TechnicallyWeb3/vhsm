@@ -28,6 +28,9 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
   private rpId = 'localhost';
   private rpName = 'VHSM FIDO2 Provider';
   
+  // Cache derived keys per credential ID during a session to avoid multiple authentications
+  private derivedKeyCache = new Map<string, Buffer>();
+  
   constructor() {
     this.f2l = new Fido2Lib({
       timeout: 60000,
@@ -39,6 +42,13 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
       authenticatorRequireResidentKey: false,
       authenticatorUserVerification: 'preferred'
     });
+  }
+  
+  /**
+   * Clear the derived key cache (useful for testing or explicit cache clearing)
+   */
+  clearDerivedKeyCache(): void {
+    this.derivedKeyCache.clear();
   }
 
   /**
@@ -145,9 +155,23 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
 
       const [credentialId, ivHex, authTagHex, encryptedData] = parts;
       
-      // Derive key from FIDO2 credential (requires user touch)
-      console.log('🔑 Please touch your Yubikey to decrypt...');
-      const derivedKey = await this.deriveKeyFromCredential(credentialId);
+      // Check if we already have a derived key for this credential ID in this session
+      // This allows decrypting multiple keys with the same credential ID without multiple authentications
+      let derivedKey = this.derivedKeyCache.get(credentialId);
+      
+      if (!derivedKey) {
+        // Derive key from FIDO2 credential (requires user touch)
+        // Only prompt once per credential ID per session
+        const isFirstKey = this.derivedKeyCache.size === 0;
+        if (isFirstKey) {
+          console.log('🔑 Please touch your Yubikey to decrypt keys...');
+        } else {
+          console.log('🔑 Please touch your Yubikey to decrypt additional keys...');
+        }
+        derivedKey = await this.deriveKeyFromCredential(credentialId);
+        // Cache the derived key for this credential ID
+        this.derivedKeyCache.set(credentialId, derivedKey);
+      }
       
       // Decrypt the data
       const iv = Buffer.from(ivHex, 'hex');

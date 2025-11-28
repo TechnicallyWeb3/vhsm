@@ -246,7 +246,6 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
  * Utility function to encrypt a key with a password
  * This is useful for initial setup
  * Uses Argon2id by default for secure key derivation
- * @deprecated Use PasswordProvider.encrypt() instead
  */
 export async function encryptKeyWithPassword(
   plaintextKey: string,
