@@ -89,21 +89,26 @@ program
 program
   .command('encrypt')
   .description('Encrypt a dotenvx private key')
-  .option('-o, --output <path>', 'Output path for encrypted key', '.env.keys.encrypted')
   .option('-p, --provider <name>', 'Encryption provider to use (password, dpapi, fido2, tpm2)', 'password')
   .option('-pw, --password <pass>', 'Password/passphrase for encryption (for testing, password/tpm2 providers only)')
   .option('-nd, --no-delete', 'Do not delete the original .env.keys file after encryption')
   // Pass-through options for dotenvx encrypt
-  .option('-fk, --env-keys-file <path>', 'Path to plaintext private key file', '.env.keys')
+  .option('-fk, --env-keys-file <path>', 'Path to plaintext private key file (output will be <path>.encrypted)', '.env.keys')
   .option('-f, --env-file <paths...>', 'Path(s) to your env file(s)')
   .option('-k, --key <keys...>', 'Key(s) to encrypt (default: all keys in file)')
   .option('-ek, --exclude-key <excludeKeys...>', 'Key(s) to exclude from encryption (default: none)')
   .action(async (options) => {
     try {
       const inputFile = options.envKeysFile || '.env.keys';
+      // Derive output path from -fk: if -fk is specified, output is <fk-path>.encrypted
+      // Otherwise, default to .env.keys.encrypted
+      const outputPath = options.envKeysFile && options.envKeysFile !== '.env.keys'
+        ? `${options.envKeysFile}.encrypted`
+        : '.env.keys.encrypted';
       // --no-delete sets options.delete to false, so we delete when delete is not false
       const shouldDelete = options.delete !== false;
-      await encryptKey(inputFile, options.output, options.provider, options.password, shouldDelete, {
+      await encryptKey(inputFile, outputPath, options.provider, options.password, shouldDelete, {
+        envKeysFile: options.envKeysFile,
         envFile: options.envFile,
         key: options.key,
         excludeKey: options.excludeKey,
@@ -1203,26 +1208,21 @@ async function encryptKey(
     console.log('✅ DPAPI ready.');
   }
 
-  // Step 2.5: Check and offer to add .env.keys to .gitignore if -fk flag is set
+  // Step 2.5: Check and offer to add files to .gitignore
+  const gitignorePath = '.gitignore';
   const envKeysFile = dotenvxOptions?.envKeysFile || keyFile;
-  if (envKeysFile) {
-    const gitignorePath = '.gitignore';
-    const keysFileName = envKeysFile.includes('/') || envKeysFile.includes('\\') 
-      ? envKeysFile.split(/[/\\]/).pop() || envKeysFile
-      : envKeysFile;
-    
-    // Check if pattern already exists in .gitignore
+  
+  // Helper function to prompt for adding a pattern to .gitignore
+  const promptForGitignore = async (pattern: string, displayName: string, message: string): Promise<boolean> => {
     const patternsToCheck = [
-      keysFileName,
-      `/${keysFileName}`,
-      `**/${keysFileName}`,
-      envKeysFile,
-      `/${envKeysFile}`,
+      pattern,
+      `/${pattern}`,
+      `**/${pattern}`,
     ];
     
     let patternExists = false;
-    for (const pattern of patternsToCheck) {
-      if (isPatternInGitignore(pattern, gitignorePath)) {
+    for (const checkPattern of patternsToCheck) {
+      if (isPatternInGitignore(checkPattern, gitignorePath)) {
         patternExists = true;
         break;
       }
@@ -1233,24 +1233,61 @@ async function encryptKey(
         {
           type: 'confirm',
           name: 'addToGitignore',
-          message: `Add ${keysFileName} to .gitignore? (recommended to prevent committing private keys)`,
+          message: message,
           default: true,
         },
       ]);
       
       if (answer.addToGitignore) {
-        // Use the simplest pattern (just the filename)
-        addPatternToGitignore(keysFileName, gitignorePath);
-        console.log(`✅ Added ${keysFileName} to .gitignore`);
+        addPatternToGitignore(pattern, gitignorePath);
+        console.log(`✅ Added ${displayName} to .gitignore`);
+        return true;
       }
     }
+    return false;
+  };
+
+  // Prompt 1: Add .env files to .gitignore
+  const envFiles = dotenvxOptions?.envFile || ['.env'];
+  for (const envFile of envFiles) {
+    const envFileName = envFile.includes('/') || envFile.includes('\\') 
+      ? envFile.split(/[/\\]/).pop() || envFile
+      : envFile;
+    
+    await promptForGitignore(
+      envFileName,
+      envFileName,
+      `Add ${envFileName} to .gitignore? (recommended to prevent committing environment variables)`
+    );
   }
 
-  // Step 3: Run dotenvx encrypt to generate/update .env.keys (only after validation)
-  console.log('Running dotenvx encrypt...');
+  // Prompt 2: Add .env.keys file to .gitignore (only if -fk flag is used)
+  if (dotenvxOptions?.envKeysFile) {
+    const keysFileName = envKeysFile.includes('/') || envKeysFile.includes('\\') 
+      ? envKeysFile.split(/[/\\]/).pop() || envKeysFile
+      : envKeysFile;
+    
+    await promptForGitignore(
+      keysFileName,
+      keysFileName,
+      `Add ${keysFileName} to .gitignore? (recommended to prevent committing private keys)`
+    );
+  }
+
+  // Prompt 3: Add .env.keys.encrypted file to .gitignore
+  const encryptedFileName = outputPath.includes('/') || outputPath.includes('\\') 
+    ? outputPath.split(/[/\\]/).pop() || outputPath
+    : outputPath;
   
+  await promptForGitignore(
+    encryptedFileName,
+    encryptedFileName,
+    `Add ${encryptedFileName} to .gitignore? (recommended to prevent committing encrypted keys)`
+  );
+
+  // Step 3: Run dotenvx encrypt to generate/update .env.keys (only after validation)
   // Build dotenvx encrypt arguments
-  const dotenvxArgs: string[] = ['encrypt'];
+  const dotenvxArgs: string[] = ['encrypt', '-q']; // -q for quiet mode to hide private key
   
   // Pass -fk flag if specified (use the one from options if provided, otherwise use keyFile parameter)
   if (envKeysFile && envKeysFile !== '.env.keys') {
@@ -1270,7 +1307,7 @@ async function encryptKey(
   }
   
   const dotenvxEncrypt = spawnDotenvx(dotenvxArgs, {
-    stdio: 'inherit',
+    stdio: 'pipe', // Use pipe instead of inherit to suppress output
     shell: process.platform === 'win32',
   });
 
@@ -1288,6 +1325,11 @@ async function encryptKey(
   if (encryptExitCode !== 0) {
     throw new Error('dotenvx encrypt failed. Please ensure dotenvx is installed and you have a .env file to encrypt.');
   }
+
+  // Show success message with files that were encrypted
+  const encryptedEnvFiles = dotenvxOptions?.envFile || ['.env'];
+  const filesList = encryptedEnvFiles.join(',');
+  console.log(`✅ encrypted (${filesList})`);
 
   // Step 3: Encrypt the keys file if it exists
   if (!existsSync(keyFile)) {
