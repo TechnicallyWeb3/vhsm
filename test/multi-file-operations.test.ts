@@ -13,7 +13,7 @@ import {
   readFile,
 } from './utils/test-helpers.js';
 import { join } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync, renameSync } from 'node:fs';
 
 describe('Multi-File Operations', () => {
   let env: ReturnType<typeof createTestEnvironment>;
@@ -123,10 +123,14 @@ describe('Multi-File Operations', () => {
       writeFileSync(scriptPath, testScript);
 
       const result = await runVhsmCommand(
-        ['run', '-pw', 'testpassword123', '-f', '.env', '.env.local', 'node', 'test-script.js'],
+        ['run', '-pw', 'testpassword123', '-f', '.env', '-f', '.env.local', '--', 'node', 'test-script.js'],
         { cwd: env.testDir }
       );
 
+      if (result.exitCode !== 0) {
+        console.log('STDERR:', result.stderr);
+        console.log('STDOUT:', result.stdout);
+      }
       expect(result.exitCode).to.equal(0);
       expect(result.stdout).to.include('SUCCESS');
     });
@@ -138,12 +142,27 @@ describe('Multi-File Operations', () => {
         SECRET_KEY: 'my-secret',
       });
 
+      // First create .env.keys with dotenvx, then rename it to custom.keys
       runDotenvxCommand(['encrypt'], env.testDir);
-      await runVhsmCommand(
-        ['encrypt', '-p', 'password', '-pw', 'testpassword123', '-ef', 'custom.keys.encrypted'],
+      const { renameSync } = await import('node:fs');
+      const originalKeys = join(env.testDir, '.env.keys');
+      const customKeys = join(env.testDir, 'custom.keys');
+      if (existsSync(originalKeys)) {
+        renameSync(originalKeys, customKeys);
+      }
+      
+      // Use -fk to specify custom keys file, output will be custom.keys.encrypted
+      const encryptResult = await runVhsmCommand(
+        ['encrypt', '-p', 'password', '-pw', 'testpassword123', '-fk', 'custom.keys'],
         { cwd: env.testDir }
       );
 
+      if (encryptResult.exitCode !== 0) {
+        console.log('Encrypt STDERR:', encryptResult.stderr);
+        console.log('Encrypt STDOUT:', encryptResult.stdout);
+      }
+
+      expect(encryptResult.exitCode).to.equal(0);
       expect(fileExists(env.testDir, 'custom.keys.encrypted')).to.be.true;
 
       const result = await runVhsmCommand(
@@ -180,10 +199,14 @@ describe('Multi-File Operations', () => {
       writeFileSync(scriptPath, testScript);
 
       const result = await runVhsmCommand(
-        ['run', '-pw', 'testpassword123', '-e', 'INJECTED_KEY=injected-value', 'node', 'test-script.js'],
+        ['run', '-pw', 'testpassword123', '-e', 'INJECTED_KEY=injected-value', '--', 'node', 'test-script.js'],
         { cwd: env.testDir }
       );
 
+      if (result.exitCode !== 0) {
+        console.log('STDERR:', result.stderr);
+        console.log('STDOUT:', result.stdout);
+      }
       expect(result.exitCode).to.equal(0);
       expect(result.stdout).to.include('SUCCESS');
     });

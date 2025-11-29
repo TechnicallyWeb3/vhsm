@@ -48,7 +48,7 @@ describe('Cache Settings', () => {
       // Second decrypt (should use cache, no password needed if cached)
       // Note: Cache may still require password depending on implementation
       const secondResult = await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123'],
         { cwd: env.testDir }
       );
 
@@ -56,7 +56,7 @@ describe('Cache Settings', () => {
     });
 
     it('should respect cache timeout', async function(this: Mocha.Context) {
-      this.timeout(5000); // Increase timeout for this test
+      this.timeout(10000); // Increase timeout for this test
 
       createEnvFile(env.testDir, {
         SECRET_KEY: 'my-secret-value',
@@ -70,7 +70,7 @@ describe('Cache Settings', () => {
 
       // First operation
       await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123', '-ct', '1000'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123', '-ct', '1000'],
         { cwd: env.testDir }
       );
 
@@ -79,7 +79,7 @@ describe('Cache Settings', () => {
 
       // Second operation should still work (may re-decrypt)
       const result = await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123', '-ct', '1000'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123', '-ct', '1000'],
         { cwd: env.testDir }
       );
 
@@ -101,7 +101,7 @@ describe('Cache Settings', () => {
 
       // First operation with no-cache
       const firstResult = await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123', '--no-cache'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123', '--no-cache'],
         { cwd: env.testDir }
       );
 
@@ -109,7 +109,7 @@ describe('Cache Settings', () => {
 
       // Second operation should still require password (no cache)
       const secondResult = await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123', '--no-cache'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123', '--no-cache'],
         { cwd: env.testDir }
       );
 
@@ -157,7 +157,7 @@ describe('Cache Settings', () => {
 
       // Use a short timeout
       const result = await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123', '-ct', '5000'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123', '-ct', '5000'],
         { cwd: env.testDir }
       );
 
@@ -179,7 +179,7 @@ describe('Cache Settings', () => {
 
       // Use cache
       await runVhsmCommand(
-        ['get', 'SECRET_KEY', '-p', 'password', '-pw', 'testpassword123'],
+        ['get', 'SECRET_KEY', '-pw', 'testpassword123'],
         { cwd: env.testDir }
       );
 

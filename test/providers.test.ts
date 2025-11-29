@@ -193,21 +193,28 @@ describe('Providers', () => {
         this.skip();
       }
 
+      // FIDO2 requires hardware interaction, so this test is intended for manual runs
+      // Increase timeout to give the human time to interact with the security key
+      // this.timeout(120000);
+
+      // Note: FIDO2 requires hardware interaction, so this test requires manual user interaction.
+      // This is acceptable since publishing requires human interaction anyway.
       createEnvFile(env.testDir, {
         SECRET_KEY: 'my-secret-value',
       });
 
       runDotenvxCommand(['encrypt'], env.testDir);
 
-      // Note: FIDO2 requires hardware interaction, so this test may need to be manual
+      // Note: FIDO2 requires hardware interaction, so this test may need user interaction
       // or mocked in CI environments
       const encryptResult = await runVhsmCommand(
         ['encrypt', '-p', 'fido2'],
         { cwd: env.testDir }
       );
 
-      // May require user interaction, so exit code may vary
-      expect([0, 1]).to.include(encryptResult.exitCode);
+      // This must succeed (exit 0) when a FIDO2 device is available and the human completes the flow.
+      // If the device is present but something goes wrong (timeout, cancellation, etc.), this test FAILS.
+      expect(encryptResult.exitCode).to.equal(0);
     });
 
     it('should skip FIDO2 tests when not available', async function(this: Mocha.Context) {

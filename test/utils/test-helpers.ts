@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync, readFileSync, unlinkSync, existsSync, rmSync 
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
+import { platform } from 'node:os';
 
 export interface TestEnvironment {
   testDir: string;
@@ -18,9 +19,14 @@ export interface TestEnvironment {
 export function createTestEnvironment(testName: string): TestEnvironment {
   const testDir = join(process.cwd(), 'test-temp', testName);
   
-  // Clean up if exists
+  // Clean up if exists (with retry for Windows file locking)
   if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch (error) {
+      // Ignore cleanup errors - will be cleaned up eventually
+      // On Windows, files might be locked by processes that haven't fully closed
+    }
   }
   
   mkdirSync(testDir, { recursive: true });
@@ -29,7 +35,13 @@ export function createTestEnvironment(testName: string): TestEnvironment {
     testDir,
     cleanup: () => {
       if (existsSync(testDir)) {
-        rmSync(testDir, { recursive: true, force: true });
+        try {
+          rmSync(testDir, { recursive: true, force: true });
+        } catch (error) {
+          // Ignore cleanup errors - files will be cleaned up eventually
+          // On Windows, files might be locked by processes that haven't fully closed
+          // This is a known issue with Windows file locking
+        }
       }
     }
   };

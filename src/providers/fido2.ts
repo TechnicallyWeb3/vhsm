@@ -454,12 +454,20 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
           })
         });
         
-        if (response.ok) {
+        // Wait for response body to be fully read to ensure all data is transmitted
+        const responseData = await response.json();
+        
+        if (response.ok && responseData.success) {
           clearTimeout(timeoutCheck);
           icon.style.display = 'none';
           status.parentElement.className = 'status success';
-          status.textContent = '✅ Success! You can close this window.';
-          setTimeout(() => window.close(), 2000);
+          status.textContent = '✅ Success! Credential registered. Window will close shortly...';
+          
+          // CRITICAL FIX: Increase delay before closing to allow WebAuthn credential to fully persist
+          // Platform authenticators (Windows Hello "this device") may need extra time to register
+          // the credential in the browser's credential store. Closing too early can prevent the
+          // credential from being available during decryption.
+          setTimeout(() => window.close(), 4000); // Increased from 2000ms to 4000ms
         } else {
           throw new Error('Server rejected credential');
         }
@@ -506,13 +514,14 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
                 clearTimeout(timeoutId);
                 
                 // Close server and all connections
-                // Small delay to ensure response is sent before destroying connections
+                // Increased delay to ensure response is fully sent and received before destroying connections
+                // This gives the browser time to receive the response and persist the WebAuthn credential
                 setTimeout(() => {
                   connections.forEach(conn => conn.destroy());
                   server.close(() => {
                     resolve({ key, credentialId });
                   });
-                }, 100);
+                }, 500); // Increased from 100ms to 500ms to ensure response transmission completes
               } catch (error) {
                 res.writeHead(400);
                 res.end();
