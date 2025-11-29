@@ -54,6 +54,7 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
   /**
    * Encrypts data using FIDO2-derived key
    * This creates a credential and derives an encryption key from it
+   * Note: Verification happens in validateEncryption() before this is called with real data
    */
   async encrypt(plaintextKey: string, config?: ProviderConfig): Promise<string> {
     try {
@@ -67,7 +68,7 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
         derivedKey = createHash('sha256').update(credentialId).digest();
         storedCredId = credentialId;
       } else {
-        // Create new credential
+        // Create new credential (typically only happens during validateEncryption with test data)
         const result = await this.createCredential();
         derivedKey = result.key;
         storedCredId = result.credentialId;
@@ -123,14 +124,51 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
     } else if (existingFido2Keys.length === 0) {
       // Need to create new credential - do it NOW before dotenvx
       console.log('Creating FIDO2 credential (this will open a browser window)...');
-      console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
+      console.log('You will need to authenticate ONCE to register a credential.\n');
       try {
         // Create credential with test data
         const testEncrypted = await this.encrypt('test-validation');
         const newCredentialId = testEncrypted.split(':')[0];
-        console.log('✅ FIDO2 credential created and validated.');
+        
+        // CRITICAL: Immediately verify the credential works by decrypting the test data
+        // This ensures the credential can be used for decryption before we encrypt real secrets
+        // This prevents data loss if the credential type (this device/hardware key/mobile) 
+        // is not available during decryption
+        console.log('\n🔍 Verifying credential by attempting immediate decryption...');
+        console.log('   (This ensures you can decrypt what was just encrypted)\n');
+        
+        try {
+          // Clear cache to force fresh authentication during verification
+          this.derivedKeyCache.delete(newCredentialId);
+          
+          // Attempt decryption - this will prompt for authentication using the same method
+          const decrypted = await this.decrypt(testEncrypted);
+          
+          // Verify the decrypted value matches the test data
+          if (decrypted !== 'test-validation') {
+            throw new Error('Decryption verification failed: decrypted value does not match test data');
+          }
+          
+          console.log('✅ Credential verification successful! The credential is working correctly.');
+          console.log('   You can now proceed with encryption.\n');
+        } catch (verifyError) {
+          // If verification fails, don't proceed with encryption
+          // This prevents creating encrypted data that cannot be decrypted later
+          const errorMsg = verifyError instanceof Error ? verifyError.message : 'Unknown error';
+          throw new Error(
+            `FIDO2 credential verification failed: ${errorMsg}\n` +
+            `The credential was created but cannot be used for decryption.\n` +
+            `This prevents data loss - please try again with a different authenticator option.\n` +
+            `Make sure to use the same authenticator type (this device/hardware key/mobile) that will be available later.`
+          );
+        }
+        
         return { credentialId: newCredentialId };
       } catch (error) {
+        if (error instanceof Error && error.message.includes('verification failed')) {
+          // Re-throw verification errors as-is (they already have good messages)
+          throw error;
+        }
         throw new Error(`FIDO2 credential creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
@@ -689,12 +727,12 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
     </div>
     
     <div class="status">
-      <p id="status">Click the button below and touch your Yubikey when it blinks.</p>
+      <p id="status">Click the button below to authenticate. Use the SAME authenticator type you used during encryption (Windows Hello, hardware key, or mobile device).</p>
     </div>
     
     <span id="yubikey-icon" class="yubikey-icon" style="display:none;">🔑</span>
     
-    <button id="authBtn" onclick="authenticate()">Unlock with Yubikey</button>
+    <button id="authBtn" onclick="authenticate()">Unlock with FIDO2</button>
     
     <div class="footer">
       Secured by FIDO2 WebAuthn
@@ -710,10 +748,13 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
       try {
         btn.disabled = true;
         status.parentElement.className = 'status';
-        status.textContent = '👆 Touch your Yubikey now...';
+        status.textContent = '🔐 Authenticate using the same method you used during encryption...';
         icon.style.display = 'block';
         
         // Authenticate with credential
+        // Note: The browser will automatically determine which authenticator type to use
+        // based on the credential ID. If you used "this device" during encryption,
+        // you should see the same option (Windows Hello, etc.) during decryption.
         const assertion = await navigator.credentials.get({
           publicKey: {
             challenge: Uint8Array.from(atob('${challenge}'.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)),
@@ -724,6 +765,10 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
             }],
             timeout: 60000,
             userVerification: 'preferred'
+            // Note: We don't specify authenticatorAttachment here because the credential ID
+            // itself tells the browser which authenticator type was used during creation.
+            // If you created the credential with "this device" (platform authenticator),
+            // the browser should automatically show that option.
           }
         });
         
