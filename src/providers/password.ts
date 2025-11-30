@@ -59,10 +59,47 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
    * Encrypts a plaintext key using password-based encryption
    */
   async encrypt(plaintextKey: string, config?: ProviderConfig): Promise<string> {
-    const password = config?.password;
+    let password = config?.password;
+    
+    // If no password provided, prompt for it
+    if (!password) {
+      const prompt = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'password',
+          message: 'Enter passphrase to encrypt keys:',
+          mask: '*',
+          validate: (input: string) => {
+            if (!input || input.length === 0) {
+              return 'Passphrase cannot be empty';
+            }
+            if (input.length < 8) {
+              return 'Passphrase must be at least 8 characters';
+            }
+            return true;
+          },
+        },
+        {
+          type: 'password',
+          name: 'confirmPassword',
+          message: 'Confirm passphrase:',
+          mask: '*',
+          validate: (input: string, answers: any) => {
+            if (input !== answers.password) {
+              return 'Passphrases do not match';
+            }
+            return true;
+          },
+        },
+      ]);
+      password = prompt.password;
+    }
+    
+    // TypeScript guard: ensure password is defined
     if (!password) {
       throw new Error('Password is required for encryption');
     }
+    
     if (password.length < 8) {
       throw new Error('Passphrase must be at least 8 characters');
     }

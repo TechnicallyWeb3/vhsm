@@ -30,9 +30,45 @@ export async function encryptKey(
     throw new Error(`Unknown provider: ${providerName}. Available providers: ${availableProviders.join(', ')}`);
   }
   
+  // Prompt for password early if using password provider and no password provided
+  let finalPassword = providedPassword;
+  
   // DPAPI doesn't support password parameter
   if (providerName !== 'password' && providedPassword) {
     console.warn('⚠️  Password parameter is ignored when not using password provider');
+  }
+  if (providerName === 'password' && !finalPassword) {
+    const inquirer = (await import('inquirer')).default;
+    const prompt = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Enter passphrase to encrypt keys:',
+        mask: '*',
+        validate: (input: string) => {
+          if (!input || input.length === 0) {
+            return 'Passphrase cannot be empty';
+          }
+          if (input.length < 8) {
+            return 'Passphrase must be at least 8 characters';
+          }
+          return true;
+        },
+      },
+      {
+        type: 'password',
+        name: 'confirmPassword',
+        message: 'Confirm passphrase:',
+        mask: '*',
+        validate: (input: string, answers: any) => {
+          if (input !== answers.password) {
+            return 'Passphrases do not match';
+          }
+          return true;
+        },
+      },
+    ]);
+    finalPassword = prompt.password;
   }
 
   // Step 1: Check if encrypted file already exists and verify provider match BEFORE running dotenvx
@@ -75,10 +111,10 @@ export async function encryptKey(
   
   // Build initial config from provided options
   const initialConfig: ProviderConfig = {};
-  if (providedPassword && (providerName === 'password' || providerName === 'tpm2')) {
-    initialConfig.password = providedPassword;
+  if (finalPassword && (providerName === 'password' || providerName === 'tpm2')) {
+    initialConfig.password = finalPassword;
     if (providerName === 'tpm2') {
-      initialConfig.authPassword = providedPassword;
+      initialConfig.authPassword = finalPassword;
     }
   }
   
