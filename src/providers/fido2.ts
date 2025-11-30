@@ -910,6 +910,6 @@ export async function encryptKeyWithFIDO2(privateKey: string, credentialId?: str
 export function isFIDO2Available(): boolean {
   // FIDO2 requires a browser environment for WebAuthn
   // In Node.js, we create a temporary web server
-  return true; // Always available, but requires user to have a FIDO2 device
+  return false; // Disabled temporarily to prevent loss of user secrets
 }
 
