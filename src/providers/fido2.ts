@@ -112,10 +112,17 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
       }
       
       console.log('Validating FIDO2 credential...');
-      // Test encrypt with dummy data to ensure credential is usable
+      // Test encrypt and decrypt with dummy data to ensure credential is usable
       try {
-        await this.encrypt('test-validation', { credentialId });
-        console.log('✅ FIDO2 credential validated.');
+        const testData = 'test-validation';
+        const encrypted = await this.encrypt(testData, { credentialId });
+        // Clear cache to force re-authentication for decryption test
+        this.clearDerivedKeyCache();
+        const decrypted = await this.decrypt(encrypted);
+        if (decrypted !== testData) {
+          throw new Error('Decryption test failed: decrypted value does not match original');
+        }
+        console.log('✅ FIDO2 credential validated (encryption and decryption test passed).');
       } catch (error) {
         throw new Error(`FIDO2 credential validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
@@ -126,9 +133,16 @@ export class FIDO2Provider implements Provider, KeyDecryptionProvider {
       console.log('You will need to touch your Yubikey ONCE to register a credential.\n');
       try {
         // Create credential with test data
-        const testEncrypted = await this.encrypt('test-validation');
+        const testData = 'test-validation';
+        const testEncrypted = await this.encrypt(testData);
         const newCredentialId = testEncrypted.split(':')[0];
-        console.log('✅ FIDO2 credential created and validated.');
+        // Clear cache to force re-authentication for decryption test
+        this.clearDerivedKeyCache();
+        const decrypted = await this.decrypt(testEncrypted);
+        if (decrypted !== testData) {
+          throw new Error('Decryption test failed: decrypted value does not match original');
+        }
+        console.log('✅ FIDO2 credential created and validated (encryption and decryption test passed).');
         return { credentialId: newCredentialId };
       } catch (error) {
         throw new Error(`FIDO2 credential creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
