@@ -80,14 +80,15 @@ describe('Providers', () => {
 
       runDotenvxCommand(['encrypt'], env.testDir);
 
-      // This should fail or prompt (depending on implementation)
+      // In non-interactive environments (tests), this should fail with an error
       const result = await runVhsmCommand(
         ['encrypt', '-p', 'password'],
         { cwd: env.testDir }
       );
 
-      // May fail or prompt - both are acceptable behaviors
-      expect([0, 1]).to.include(result.exitCode);
+      // Should fail with error message about requiring password
+      expect(result.exitCode).to.equal(1);
+      expect(result.stderr).to.include('Password is required');
     });
   });
 

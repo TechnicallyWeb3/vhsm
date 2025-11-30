@@ -38,6 +38,12 @@ export async function encryptKey(
     console.warn('⚠️  Password parameter is ignored when not using password provider');
   }
   if (providerName === 'password' && !finalPassword) {
+    // Check if we're in a non-interactive environment (e.g., tests)
+    const isTTY = process.stdin.isTTY;
+    if (!isTTY) {
+      throw new Error('Password is required for encryption. Please provide it with -pw flag or run in an interactive terminal.');
+    }
+    
     const inquirer = (await import('inquirer')).default;
     const prompt = await inquirer.prompt([
       {

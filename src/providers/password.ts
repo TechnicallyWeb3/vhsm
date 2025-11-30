@@ -63,6 +63,12 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
     
     // If no password provided, prompt for it
     if (!password) {
+      // Check if we're in a non-interactive environment (e.g., tests)
+      const isTTY = process.stdin.isTTY;
+      if (!isTTY) {
+        throw new Error('Password is required for encryption. Please provide it in the config or run in an interactive terminal.');
+      }
+      
       const prompt = await inquirer.prompt([
         {
           type: 'password',
