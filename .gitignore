@@ -20,3 +20,5 @@ test-app/.env.keys
 test-app/.env.keys.encrypted
 test-app/node_modules/
 
+# Agent docs
+agent-docs/
