@@ -1,6 +1,6 @@
 {
   "name": "vhsm",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Virtual HSM - Secure dotenvx wrapper with pluggable key decryption",
   "type": "module",
   "bin": {
