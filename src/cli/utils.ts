@@ -79,6 +79,9 @@ export function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; en
     const match = new RegExp(`^(VHSM_PRIVATE_KEY[^=]*)=(${providerPattern}):(.+)$`).exec(trimmed);
     if (match) {
       const provider = match[2];
+      if (!listProviders().includes(provider)) {
+        throw new Error(`Unknown provider: ${provider}. Available providers: ${listProviders().join(', ')}`);
+      }
       keys.push({
         vhsmKey: match[1],
         provider,

@@ -18,6 +18,12 @@ export interface ProviderConfig {
   authPassword?: string;
   
   /**
+   * Password input timeout in milliseconds (for password prompts)
+   * Default: 120000 (2 minutes)
+   */
+  passwordTimeout?: number;
+  
+  /**
    * Additional provider-specific options
    */
   [key: string]: unknown;
@@ -153,6 +159,12 @@ export interface VhsmConfig {
    * Default: false (must be explicitly enabled)
    */
   allowExec?: boolean;
+  
+  /**
+   * Password input timeout in milliseconds
+   * Default: 120000 (2 minutes)
+   */
+  passwordTimeout?: number;
 }
 
 /**

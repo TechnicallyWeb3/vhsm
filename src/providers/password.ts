@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import type { Provider, KeyDecryptionProvider, ProviderConfig, PasswordMode } from '../types.js';
+import type { Provider, ProviderConfig, PasswordMode } from '../types.js';
 import { DecryptionError } from '../types.js';
 import inquirer from 'inquirer';
 import argon2 from 'argon2';
@@ -13,6 +13,33 @@ const ARGON2_MEMORY_COST = 65536; // 64 MB
 const ARGON2_TIME_COST = 3; // iterations
 const ARGON2_PARALLELISM = 4; // threads
 const ARGON2_KEYLEN = 32; // 32 bytes for AES-256
+
+// Default password input timeout (2 minutes) - exported below
+const DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL = 120000;
+
+/**
+ * Helper function to wrap inquirer prompts with a timeout
+ * @param promptPromise - The inquirer prompt promise
+ * @param timeoutMs - Timeout in milliseconds (default: 2 minutes)
+ * @returns The prompt result or throws an error on timeout
+ */
+export async function promptWithTimeout<T>(
+  promptPromise: Promise<T>,
+  timeoutMs: number = DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL
+): Promise<T> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Password input timeout after ${timeoutMs / 1000} seconds. Please try again.`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promptPromise, timeoutPromise]);
+}
+
+/**
+ * Default password timeout constant (exported for use in other modules)
+ */
+export const DEFAULT_PASSWORD_TIMEOUT_MS = DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
 
 /**
  * Derives a key from a password using the specified KDF
@@ -51,7 +78,7 @@ async function deriveKey(
  * Uses AES-256-GCM for encryption/decryption
  * Supports Argon2id (default) and SHA256 (legacy) key derivation
  */
-export class PasswordProvider implements Provider, KeyDecryptionProvider {
+export class PasswordProvider implements Provider {
   readonly name = 'password';
   readonly requiresInteraction = true;
   readonly passwordMode: PasswordMode = 'required';
@@ -65,7 +92,8 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
     
     // If no password provided, prompt for it
     if (!password) {
-      const prompt = await inquirer.prompt([
+      const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+      const promptPromise = inquirer.prompt([
         {
           type: 'password',
           name: 'password',
@@ -82,6 +110,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
           },
         },
       ]);
+      const prompt = await promptWithTimeout(promptPromise, timeoutMs);
       password = prompt.password;
     }
     
@@ -131,7 +160,8 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
         let validatedPassword: string | undefined;
         
         while (!passwordValid && attempts < maxAttempts) {
-          const passwordPrompt = await inquirer.prompt([
+          const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+          const promptPromise = inquirer.prompt([
             {
               type: 'password',
               name: 'password',
@@ -145,6 +175,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
               },
             },
           ]);
+          const passwordPrompt = await promptWithTimeout(promptPromise, timeoutMs);
           
           try {
             await this.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
@@ -214,7 +245,11 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
       if (providedPassword) {
         password = providedPassword;
       } else {
-        const prompt = await inquirer.prompt([
+        // Extract timeout from config if available
+        const timeoutMs = typeof configOrPassword === 'object' && configOrPassword?.passwordTimeout
+          ? configOrPassword.passwordTimeout
+          : DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+        const promptPromise = inquirer.prompt([
           {
             type: 'password',
             name: 'password',
@@ -228,6 +263,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
             },
           },
         ]);
+        const prompt = await promptWithTimeout(promptPromise, timeoutMs);
         password = prompt.password;
       }
 
