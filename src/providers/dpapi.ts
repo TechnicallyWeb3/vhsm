@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { platform } from 'node:os';
-import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig, PasswordMode } from '../types.js';
 import { DecryptionError } from '../types.js';
 
 /**
@@ -12,6 +12,8 @@ import { DecryptionError } from '../types.js';
 export class DPAPIProvider implements Provider, KeyDecryptionProvider {
   readonly name = 'dpapi';
   readonly requiresInteraction = false;
+  readonly passwordMode: PasswordMode = 'none';
+  readonly outputPrefix = 'dpapi';
 
   constructor() {
     // Verify we're on Windows

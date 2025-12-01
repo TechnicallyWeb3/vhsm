@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { listProviders } from '../providers/index.js';
 
 const require = createRequire(import.meta.url);
 const resolvedDotenvxBin = resolveDotenvxBin();
@@ -69,21 +70,15 @@ export function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; en
     if (trimmed.startsWith('#') || !trimmed) {
       continue;
     }
-    
-    // Match VHSM_PRIVATE_KEY[_SUFFIX]=(encrypted|dpapi|fido2|tpm2):...
-    const match = /^(VHSM_PRIVATE_KEY[^=]*)=(encrypted|dpapi|fido2|tpm2):(.*)/.exec(trimmed);
+
+    // Match VHSM_PRIVATE_KEY[_SUFFIX]=provider:encryptedValue
+    // The provider must be one of the known providers, followed by a colon
+    // The encrypted value may contain colons, so we need to match only the provider name
+    const providers = listProviders();
+    const providerPattern = providers.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const match = new RegExp(`^(VHSM_PRIVATE_KEY[^=]*)=(${providerPattern}):(.+)$`).exec(trimmed);
     if (match) {
-      const providerPrefix = match[2];
-      let provider = 'password';
-      
-      if (providerPrefix === 'dpapi') {
-        provider = 'dpapi';
-      } else if (providerPrefix === 'fido2') {
-        provider = 'fido2';
-      } else if (providerPrefix === 'tpm2') {
-        provider = 'tpm2';
-      }
-      
+      const provider = match[2];
       keys.push({
         vhsmKey: match[1],
         provider,

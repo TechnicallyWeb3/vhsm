@@ -24,6 +24,11 @@ export interface ProviderConfig {
 }
 
 /**
+ * Password mode for providers
+ */
+export type PasswordMode = 'required' | 'optional' | 'none';
+
+/**
  * Unified provider interface for encryption and decryption
  */
 export interface Provider {
@@ -36,6 +41,20 @@ export interface Provider {
    * Whether this provider requires user interaction
    */
   readonly requiresInteraction: boolean;
+  
+  /**
+   * Password mode for this provider
+   * - 'required': Provider requires a password (e.g., password provider)
+   * - 'optional': Provider can optionally use a password (e.g., TPM2 with authPassword)
+   * - 'none': Provider does not use passwords (e.g., DPAPI, FIDO2)
+   */
+  readonly passwordMode: PasswordMode;
+  
+  /**
+   * Output prefix for encrypted keys in the output format
+   * Defaults to provider name if not specified
+   */
+  readonly outputPrefix?: string;
   
   /**
    * Encrypts a plaintext key using the provider's method

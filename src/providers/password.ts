@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig, PasswordMode } from '../types.js';
 import { DecryptionError } from '../types.js';
 import inquirer from 'inquirer';
 import argon2 from 'argon2';
@@ -54,6 +54,8 @@ async function deriveKey(
 export class PasswordProvider implements Provider, KeyDecryptionProvider {
   readonly name = 'password';
   readonly requiresInteraction = true;
+  readonly passwordMode: PasswordMode = 'required';
+  // readonly outputPrefix = 'encrypted';
 
   /**
    * Encrypts a plaintext key using password-based encryption
@@ -63,12 +65,6 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
     
     // If no password provided, prompt for it
     if (!password) {
-      // Check if we're in a non-interactive environment (e.g., tests)
-      const isTTY = process.stdin.isTTY;
-      if (!isTTY) {
-        throw new Error('Password is required for encryption. Please provide it in the config or run in an interactive terminal.');
-      }
-      
       const prompt = await inquirer.prompt([
         {
           type: 'password',
@@ -81,18 +77,6 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
             }
             if (input.length < 8) {
               return 'Passphrase must be at least 8 characters';
-            }
-            return true;
-          },
-        },
-        {
-          type: 'password',
-          name: 'confirmPassword',
-          message: 'Confirm passphrase:',
-          mask: '*',
-          validate: (input: string, answers: any) => {
-            if (input !== answers.password) {
-              return 'Passphrases do not match';
             }
             return true;
           },
@@ -121,13 +105,9 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
     existingKeys?: Array<{ provider: string; encryptedValue: string }>
   ): Promise<ProviderConfig | void> {
     const providedPassword = config?.password;
-    const existingPasswordKeys = existingKeys?.filter(k => k.provider === 'password') || [];
+    const existingPasswordKeys = existingKeys?.filter(k => k.provider === this.name) || [];
     
     if (providedPassword) {
-      if (providedPassword.length < 8) {
-        throw new Error('Passphrase must be at least 8 characters');
-      }
-      
       // If there are existing keys, validate password against them
       if (existingPasswordKeys.length > 0) {
         try {
@@ -155,7 +135,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
             {
               type: 'password',
               name: 'password',
-              message: 'Enter passphrase to validate (must match existing keys):',
+              message: 'Confirm passphrase:',
               mask: '*',
               validate: (input: string) => {
                 if (!input || input.length === 0) {
@@ -170,11 +150,11 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
             await this.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
             validatedPassword = passwordPrompt.password;
             passwordValid = true;
-            console.log('✅ Password validated against existing keys.');
+            console.log('✅ Password matches.');
           } catch (error) {
             attempts++;
             if (attempts < maxAttempts) {
-              console.error(`❌ Password does not match existing keys. ${maxAttempts - attempts} attempt(s) remaining.`);
+              console.error(`❌ Password does not match. ${maxAttempts - attempts} attempt(s) remaining.`);
             } else {
               throw new Error('Password validation failed. Maximum attempts reached.');
             }
@@ -238,7 +218,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
           {
             type: 'password',
             name: 'password',
-            message: 'Enter passphrase to decrypt dotenvx private key:',
+            message: 'Enter passphrase to decrypt vhsm private keys:',
             mask: '*',
             validate: (input: string) => {
               if (!input || input.length === 0) {

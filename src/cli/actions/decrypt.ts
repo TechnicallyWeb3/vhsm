@@ -296,9 +296,9 @@ export async function decryptCommand(options: {
       const encryptedResult = removeKeysFromEncryptedFile(encryptedFilePath, vhsmKeysToRemove);
       if (encryptedResult.removed) {
         if (encryptedResult.shouldDelete) {
-          console.log(`✅ Removed keys and deleted ${encryptedFilePath} (no keys remaining)`);
+          console.log(`✅ Removed keys, headers, and deleted ${encryptedFilePath} (no keys remaining)`);
         } else {
-          console.log(`✅ Removed keys from ${encryptedFilePath}`);
+          console.log(`✅ Removed keys and env headers from ${encryptedFilePath}`);
         }
       }
       
@@ -307,7 +307,7 @@ export async function decryptCommand(options: {
       for (const envFile of envFiles) {
         const envResult = removeHeaderAndPublicKeyFromEnvFile(envFile);
         if (envResult.removed) {
-          console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
+          // console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
         }
       }
     }
