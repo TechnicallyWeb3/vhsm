@@ -11,9 +11,7 @@
   "files": [
     "dist/",
     "README.md",
-    "LICENSE",
-    "FIDO2-GUIDE.md",
-    "FIDO2-QUICKSTART.md"
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
