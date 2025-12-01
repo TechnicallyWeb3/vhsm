@@ -93,6 +93,9 @@ export class PasswordProvider implements Provider {
     // If no password provided, prompt for it
     if (!password) {
       const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+      if (process.env.VHSM_DEBUG) {
+        console.log(`[vhsm][password] Using password prompt timeout (encrypt): ${timeoutMs}ms`);
+      }
       const promptPromise = inquirer.prompt([
         {
           type: 'password',
@@ -161,6 +164,9 @@ export class PasswordProvider implements Provider {
         
         while (!passwordValid && attempts < maxAttempts) {
           const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+          if (process.env.VHSM_DEBUG) {
+            console.log(`[vhsm][password] Using password prompt timeout (validateEncryption): ${timeoutMs}ms`);
+          }
           const promptPromise = inquirer.prompt([
             {
               type: 'password',
@@ -249,6 +255,9 @@ export class PasswordProvider implements Provider {
         const timeoutMs = typeof configOrPassword === 'object' && configOrPassword?.passwordTimeout
           ? configOrPassword.passwordTimeout
           : DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+        if (process.env.VHSM_DEBUG) {
+          console.log(`[vhsm][password] Using password prompt timeout (decrypt): ${timeoutMs}ms`);
+        }
         const promptPromise = inquirer.prompt([
           {
             type: 'password',

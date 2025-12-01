@@ -73,18 +73,31 @@ describe('Providers', () => {
       expect(result.stderr).to.include('Failed to decrypt');
     });
 
-    it.skip('should require password for encryption', async () => {
+    it('should require password for encryption (prompt timeout)', async () => {
       createEnvFile(env.testDir, {
         SECRET_KEY: 'my-secret-value',
       });
 
       runDotenvxCommand(['encrypt'], env.testDir);
 
-      // This should prompt for password
-      // Expect mocha timeout due to password prompt
-      await runVhsmCommand(
+      // This should prompt for password. We configure a short password timeout
+      // so the prompt fails quickly instead of hanging the test run.
+      const result = await runVhsmCommand(
         ['encrypt', '-p', 'password'],
-        { cwd: env.testDir }
+        {
+          cwd: env.testDir,
+          env: {
+            VHSM_PASSWORD_TIMEOUT: '1000', // 1 second timeout for tests
+            VHSM_DEBUG: 'true',           // enable timeout debug logging
+          },
+        }
+      );
+
+      // Expect the command to fail due to password prompt timeout
+      expect(result.exitCode).to.not.equal(0);
+      expect(result.stderr).to.satisfy((stderr: string) =>
+        stderr.includes('Password input timeout') ||
+        stderr.includes('Encryption test failed')
       );
     });
   });

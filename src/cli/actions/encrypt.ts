@@ -24,6 +24,9 @@ export async function encryptKey(
     gitignore?: string[] | boolean;
   }
 ) {
+  // Load configuration (including password timeout)
+  const config = loadConfig();
+
   // Validate provider
   const availableProviders = listProviders();
   if (!availableProviders.includes(providerName)) {
@@ -52,6 +55,9 @@ export async function encryptKey(
   let validatedConfig: ProviderConfig | undefined;
   let initialConfig: ProviderConfig = {};
   initialConfig.password = providedPassword;
+  if (config.passwordTimeout) {
+    initialConfig.passwordTimeout = config.passwordTimeout;
+  }
 
   if (existingKeys.length > 0) {
     // Re-encryption flow: validate against existing keys, then run dotenvx
