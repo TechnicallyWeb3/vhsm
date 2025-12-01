@@ -76,9 +76,8 @@ export function createEncryptedKeysFile(
 #/ VHSM encrypted keys. DO NOT commit to source control /
 #/------------------------------------------------------/
 `;
-  const providerPrefix = (provider: string) => provider === 'password' ? 'encrypted' : provider;
   const keysContent = keys
-    .map(({ key, encryptedValue, provider }) => `${key}=${providerPrefix(provider)}:${encryptedValue}`)
+    .map(({ key, encryptedValue, provider }) => `${key}=${provider}:${encryptedValue}`)
     .join('\n');
   writeFileSync(encryptedPath, header + keysContent, { mode: 0o600 });
   return encryptedPath;

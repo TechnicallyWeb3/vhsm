@@ -46,6 +46,10 @@ export function loadConfig(): VhsmConfig {
   if (process.env.VHSM_ALLOW_EXEC !== undefined) {
     config.allowExec = process.env.VHSM_ALLOW_EXEC === 'true';
   }
+  
+  if (process.env.VHSM_PASSWORD_TIMEOUT) {
+    config.passwordTimeout = parseInt(process.env.VHSM_PASSWORD_TIMEOUT, 10);
+  }
 
   return config;
 }

@@ -3,7 +3,7 @@ import { platform } from 'node:os';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
+import type { Provider, KeyDecryptionProvider, ProviderConfig, PasswordMode } from '../types.js';
 import { DecryptionError } from '../types.js';
 
 /**
@@ -20,6 +20,8 @@ import { DecryptionError } from '../types.js';
 export class TPM2Provider implements Provider, KeyDecryptionProvider {
   readonly name = 'tpm2';
   readonly requiresInteraction = true; // Requires PIN/auth on decrypt
+  readonly passwordMode: PasswordMode = 'optional';
+  readonly outputPrefix = 'tpm2';
 
   private tpmDir: string;
 

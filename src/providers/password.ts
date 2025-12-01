@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import type { Provider, KeyDecryptionProvider, ProviderConfig } from '../types.js';
+import type { Provider, ProviderConfig, PasswordMode } from '../types.js';
 import { DecryptionError } from '../types.js';
 import inquirer from 'inquirer';
 import argon2 from 'argon2';
@@ -13,6 +13,33 @@ const ARGON2_MEMORY_COST = 65536; // 64 MB
 const ARGON2_TIME_COST = 3; // iterations
 const ARGON2_PARALLELISM = 4; // threads
 const ARGON2_KEYLEN = 32; // 32 bytes for AES-256
+
+// Default password input timeout (2 minutes) - exported below
+const DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL = 120000;
+
+/**
+ * Helper function to wrap inquirer prompts with a timeout
+ * @param promptPromise - The inquirer prompt promise
+ * @param timeoutMs - Timeout in milliseconds (default: 2 minutes)
+ * @returns The prompt result or throws an error on timeout
+ */
+export async function promptWithTimeout<T>(
+  promptPromise: Promise<T>,
+  timeoutMs: number = DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL
+): Promise<T> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Password input timeout after ${timeoutMs / 1000} seconds. Please try again.`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promptPromise, timeoutPromise]);
+}
+
+/**
+ * Default password timeout constant (exported for use in other modules)
+ */
+export const DEFAULT_PASSWORD_TIMEOUT_MS = DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
 
 /**
  * Derives a key from a password using the specified KDF
@@ -51,18 +78,50 @@ async function deriveKey(
  * Uses AES-256-GCM for encryption/decryption
  * Supports Argon2id (default) and SHA256 (legacy) key derivation
  */
-export class PasswordProvider implements Provider, KeyDecryptionProvider {
+export class PasswordProvider implements Provider {
   readonly name = 'password';
   readonly requiresInteraction = true;
+  readonly passwordMode: PasswordMode = 'required';
+  // readonly outputPrefix = 'encrypted';
 
   /**
    * Encrypts a plaintext key using password-based encryption
    */
   async encrypt(plaintextKey: string, config?: ProviderConfig): Promise<string> {
-    const password = config?.password;
+    let password = config?.password;
+    
+    // If no password provided, prompt for it
+    if (!password) {
+      const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+      if (process.env.VHSM_DEBUG) {
+        console.log(`[vhsm][password] Using password prompt timeout (encrypt): ${timeoutMs}ms`);
+      }
+      const promptPromise = inquirer.prompt([
+        {
+          type: 'password',
+          name: 'password',
+          message: 'Enter passphrase to encrypt keys:',
+          mask: '*',
+          validate: (input: string) => {
+            if (!input || input.length === 0) {
+              return 'Passphrase cannot be empty';
+            }
+            if (input.length < 8) {
+              return 'Passphrase must be at least 8 characters';
+            }
+            return true;
+          },
+        },
+      ]);
+      const prompt = await promptWithTimeout(promptPromise, timeoutMs);
+      password = prompt.password;
+    }
+    
+    // TypeScript guard: ensure password is defined
     if (!password) {
       throw new Error('Password is required for encryption');
     }
+    
     if (password.length < 8) {
       throw new Error('Passphrase must be at least 8 characters');
     }
@@ -78,13 +137,9 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
     existingKeys?: Array<{ provider: string; encryptedValue: string }>
   ): Promise<ProviderConfig | void> {
     const providedPassword = config?.password;
-    const existingPasswordKeys = existingKeys?.filter(k => k.provider === 'password') || [];
+    const existingPasswordKeys = existingKeys?.filter(k => k.provider === this.name) || [];
     
     if (providedPassword) {
-      if (providedPassword.length < 8) {
-        throw new Error('Passphrase must be at least 8 characters');
-      }
-      
       // If there are existing keys, validate password against them
       if (existingPasswordKeys.length > 0) {
         try {
@@ -108,11 +163,15 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
         let validatedPassword: string | undefined;
         
         while (!passwordValid && attempts < maxAttempts) {
-          const passwordPrompt = await inquirer.prompt([
+          const timeoutMs = config?.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+          if (process.env.VHSM_DEBUG) {
+            console.log(`[vhsm][password] Using password prompt timeout (validateEncryption): ${timeoutMs}ms`);
+          }
+          const promptPromise = inquirer.prompt([
             {
               type: 'password',
               name: 'password',
-              message: 'Enter passphrase to validate (must match existing keys):',
+              message: 'Confirm passphrase:',
               mask: '*',
               validate: (input: string) => {
                 if (!input || input.length === 0) {
@@ -122,16 +181,17 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
               },
             },
           ]);
+          const passwordPrompt = await promptWithTimeout(promptPromise, timeoutMs);
           
           try {
             await this.decrypt(existingPasswordKeys[0].encryptedValue, passwordPrompt.password);
             validatedPassword = passwordPrompt.password;
             passwordValid = true;
-            console.log('✅ Password validated against existing keys.');
+            console.log('✅ Password matches.');
           } catch (error) {
             attempts++;
             if (attempts < maxAttempts) {
-              console.error(`❌ Password does not match existing keys. ${maxAttempts - attempts} attempt(s) remaining.`);
+              console.error(`❌ Password does not match. ${maxAttempts - attempts} attempt(s) remaining.`);
             } else {
               throw new Error('Password validation failed. Maximum attempts reached.');
             }
@@ -191,11 +251,18 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
       if (providedPassword) {
         password = providedPassword;
       } else {
-        const prompt = await inquirer.prompt([
+        // Extract timeout from config if available
+        const timeoutMs = typeof configOrPassword === 'object' && configOrPassword?.passwordTimeout
+          ? configOrPassword.passwordTimeout
+          : DEFAULT_PASSWORD_TIMEOUT_MS_INTERNAL;
+        if (process.env.VHSM_DEBUG) {
+          console.log(`[vhsm][password] Using password prompt timeout (decrypt): ${timeoutMs}ms`);
+        }
+        const promptPromise = inquirer.prompt([
           {
             type: 'password',
             name: 'password',
-            message: 'Enter passphrase to decrypt dotenvx private key:',
+            message: 'Enter passphrase to decrypt vhsm private keys:',
             mask: '*',
             validate: (input: string) => {
               if (!input || input.length === 0) {
@@ -205,6 +272,7 @@ export class PasswordProvider implements Provider, KeyDecryptionProvider {
             },
           },
         ]);
+        const prompt = await promptWithTimeout(promptPromise, timeoutMs);
         password = prompt.password;
       }
 

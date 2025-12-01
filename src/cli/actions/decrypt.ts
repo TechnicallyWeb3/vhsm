@@ -3,6 +3,7 @@ import { getProvider, getDefaultProvider } from '../../providers/index.js';
 import { SessionCache } from '../../cache.js';
 import { createKeyId, clearString } from '../../security.js';
 import { loadConfig } from '../../config.js';
+import { promptWithTimeout, DEFAULT_PASSWORD_TIMEOUT_MS } from '../../providers/password.js';
 import { 
   loadEncryptedKeyFile, 
   parseEncryptedKeys, 
@@ -163,7 +164,8 @@ export async function decryptCommand(options: {
   
   if (passwordKeys.length > 0 && !passwordForDecrypt) {
     const inquirer = (await import('inquirer')).default;
-    const passwordPrompt = await inquirer.prompt([
+    const timeoutMs = config.passwordTimeout ?? DEFAULT_PASSWORD_TIMEOUT_MS;
+    const promptPromise = inquirer.prompt([
       {
         type: 'password',
         name: 'password',
@@ -177,6 +179,7 @@ export async function decryptCommand(options: {
         },
       },
     ]);
+    const passwordPrompt = await promptWithTimeout(promptPromise, timeoutMs);
     passwordForDecrypt = passwordPrompt.password;
   }
 
@@ -296,9 +299,9 @@ export async function decryptCommand(options: {
       const encryptedResult = removeKeysFromEncryptedFile(encryptedFilePath, vhsmKeysToRemove);
       if (encryptedResult.removed) {
         if (encryptedResult.shouldDelete) {
-          console.log(`✅ Removed keys and deleted ${encryptedFilePath} (no keys remaining)`);
+          console.log(`✅ Removed keys, headers, and deleted ${encryptedFilePath} (no keys remaining)`);
         } else {
-          console.log(`✅ Removed keys from ${encryptedFilePath}`);
+          console.log(`✅ Removed keys and env headers from ${encryptedFilePath}`);
         }
       }
       
@@ -307,7 +310,7 @@ export async function decryptCommand(options: {
       for (const envFile of envFiles) {
         const envResult = removeHeaderAndPublicKeyFromEnvFile(envFile);
         if (envResult.removed) {
-          console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
+          // console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
         }
       }
     }
@@ -402,7 +405,7 @@ export async function decryptCommand(options: {
     for (const envFile of envFiles) {
       const envResult = removeHeaderAndPublicKeyFromEnvFile(envFile);
       if (envResult.removed) {
-        console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
+        // console.log(`✅ Removed header, public key, and filename comment from ${envFile}`);
       }
     }
   }

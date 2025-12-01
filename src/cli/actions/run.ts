@@ -86,40 +86,45 @@ export async function runCommand(command: string[], options: {
     ? parseInt(options.cacheTimeout, 10) 
     : (config.cacheTimeout || 3600000);
 
-  // Load and parse encrypted key file
-  const keyPath = options.encryptedKeysFile || '.env.keys.encrypted';
-  const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
-  const availableKeys = parseEncryptedKeys(encryptedKeyContent);
-
-  if (availableKeys.length === 0) {
-    throw new Error('No VHSM_PRIVATE_KEY found in encrypted key file');
-  }
-
-  // Determine which keys to decrypt based on the env files passed
-  const envFiles = options.envFile || ['.env'];
-  const keysToProcess = matchKeysToEnvFiles(envFiles, availableKeys);
-
-  if (keysToProcess.length === 0) {
-    throw new Error('No matching encrypted keys found for the specified env files');
-  }
-
-  // Decrypt all keys (each key may use a different provider)
   const decryptedKeys: Array<{ dotenvKey: string; decryptedValue: string }> = [];
 
-  for (const keyEntry of keysToProcess) {
-    const decryptedValue = await decryptKeyWithCache(
-      keyEntry.encryptedValue,
-      keyEntry.provider,
-      options.password,
-      enableCache,
-      cacheTimeout,
-      keyEntry.vhsmKey
-    );
+  try {
+    // Load and parse encrypted key file
+    const keyPath = options.encryptedKeysFile || '.env.keys.encrypted';
+    const encryptedKeyContent = loadEncryptedKeyFile(keyPath);
+    const availableKeys = parseEncryptedKeys(encryptedKeyContent);
 
-    decryptedKeys.push({
-      dotenvKey: keyEntry.dotenvKey,
-      decryptedValue,
-    });
+    if (availableKeys.length === 0) {
+      console.warn('⚠️  No VHSM_PRIVATE_KEY found in encrypted key file. Continuing without VHSM keys.');
+    } else {
+      // Determine which keys to decrypt based on the env files passed
+      const envFiles = options.envFile || ['.env'];
+      const keysToProcess = matchKeysToEnvFiles(envFiles, availableKeys);
+
+      if (keysToProcess.length === 0) {
+        console.warn('⚠️  No matching encrypted keys found for the specified env files. Continuing without VHSM keys.');
+      } else {
+        // Decrypt all keys (each key may use a different provider)
+        for (const keyEntry of keysToProcess) {
+          const decryptedValue = await decryptKeyWithCache(
+            keyEntry.encryptedValue,
+            keyEntry.provider,
+            options.password,
+            enableCache,
+            cacheTimeout,
+            keyEntry.vhsmKey
+          );
+
+          decryptedKeys.push({
+            dotenvKey: keyEntry.dotenvKey,
+            decryptedValue,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`⚠️  Failed to prepare VHSM keys (${message}). Continuing without VHSM keys.`);
   }
 
   // Prepare environment with decrypted keys
