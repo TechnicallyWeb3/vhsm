@@ -14,6 +14,7 @@
 - 🚫 **No Secret Leakage**: Error handling sanitizes messages to prevent information disclosure
 - 🔧 **Developer-Friendly**: Simple CLI workflow that integrates seamlessly with dotenvx
 - ⚡ **Programmatic Execution**: `vhsm.exec()` allows secure function execution with automatic env variable injection
+- 📄 **JSON File Encryption**: Encrypt entire JSON configuration files and access values with dot notation
 
 ## Installation
 
@@ -502,6 +503,49 @@ node verify-setup.js
 ```
 
 See `test-app/README.md` and `test-app/QUICKSTART.md` for detailed instructions.
+
+## JSON File Encryption
+
+vHSM now supports encrypting entire JSON configuration files! This is perfect for storing structured configuration data securely.
+
+### Quick Example
+
+```bash
+# Encrypt a JSON file
+vhsm encrypt config.json
+
+# Decrypt it
+vhsm decrypt config.encrypted.json
+```
+
+### Programmatic Usage
+
+```typescript
+import { loadFile, getJsonValue, exec } from 'vhsm';
+
+// Load entire JSON file
+const config = await loadFile('./config.encrypted.json');
+
+// Get specific value with dot notation
+const dbPassword = await getJsonValue(
+  './config.encrypted.json',
+  'database.credentials.password'
+);
+
+// Use in exec() with @vhsm syntax
+const result = await exec(
+  async ({ userName, apiKey }) => {
+    console.log(`User: ${userName}, Key: ${apiKey}`);
+  },
+  {
+    userName: '@vhsm config.encrypted.json user.name',
+    apiKey: '@vhsm config.encrypted.json apiKeys.primary',
+  },
+  { allowExec: true }
+);
+```
+
+**📚 See [JSON-ENCRYPTION.md](./JSON-ENCRYPTION.md) for complete documentation and examples.**
 
 ## Troubleshooting
 

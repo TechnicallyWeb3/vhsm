@@ -98,6 +98,8 @@ export function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; en
  * .env → ''
  * .env.local → '_LOCAL'
  * .env.production → '_PRODUCTION'
+ * .env.config.json → '_CONFIG_JSON'
+ * .env.local.v1 → '_LOCAL_V1'
  * ./backend/.env → '' (extracts filename first)
  * ./backend/.env.local → '_LOCAL' (extracts filename first)
  */
@@ -109,11 +111,13 @@ export function getEnvSuffix(envFile: string): string {
     return '';
   }
   
-  // Split by '.' to get parts: ['.env', 'local'] or ['.env', 'production']
+  // Split by '.' to get parts: ['.env', 'local'] or ['.env', 'config', 'json']
   const parts = filename.split('.');
   if (parts.length > 2) {
-    // parts[0] is empty string, parts[1] is 'env', parts[2] is the suffix
-    return '_' + parts[parts.length - 1].toUpperCase();
+    // parts[0] is empty string, parts[1] is 'env', parts[2+] are the suffix parts
+    // Join all parts after 'env' with underscores and convert to uppercase
+    const suffixParts = parts.slice(2); // Skip empty string and 'env'
+    return '_' + suffixParts.join('_').toUpperCase();
   }
   
   return '';

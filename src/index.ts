@@ -13,6 +13,8 @@ export { SessionCache } from './cache.js';
 export { createKeyId, sanitizeError, clearString } from './security.js';
 export { loadConfig } from './config.js';
 export { exec } from './exec.js';
+export { encryptJsonFile, loadFile, getJsonValue } from './lib/files.js';
 export type { KeyDecryptionProvider, VhsmConfig, CachedKey, DecryptionError } from './types.js';
 export type { ExecOptions } from './exec.js';
+export type { EncryptJsonOptions, LoadFileOptions } from './lib/files.js';
 

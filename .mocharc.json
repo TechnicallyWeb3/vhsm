@@ -2,7 +2,6 @@
   "extension": ["js"],
   "timeout": 30000,
   "recursive": true,
-  "spec": ["test-dist/**/*.test.js"],
   "exit": true
 }
 
