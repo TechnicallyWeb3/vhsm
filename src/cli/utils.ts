@@ -442,3 +442,7 @@ export function removeHeaderAndPublicKeyFromEnvFile(filePath: string): { removed
   return { removed: removedAny };
 }
 
+export function jsonFileToEnvKey(filePath: string): string {
+  const fileName = basename(filePath, '.json');
+  return fileName.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_JSON';
+}

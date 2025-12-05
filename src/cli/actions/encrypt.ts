@@ -126,6 +126,12 @@ export async function encryptKey(
   const envKeysFile = dotenvxOptions?.envKeysFile || keyFile;
   const envFiles = dotenvxOptions?.envFile || ['.env'];
 
+  // TODO: Combine the logic of encrypting JSON files with the logic of encrypting environment variables in the same function
+  // Check if any of the env files are JSON files and encrypt them using the similar
+  // logic as the encryptJsonFile function: 
+  // 1. add json content to env file and encrypt the json data using dotenvx
+
+
   // Step 2.75: Decrypt existing VHSM_PRIVATE_KEY to get DOTENV_PRIVATE_KEY for dotenvx
   // This allows dotenvx encrypt to use existing keys instead of creating new .env.keys file
   // This is especially useful when re-encrypting with the same password
