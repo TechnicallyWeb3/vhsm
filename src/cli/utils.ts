@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { listProviders } from '../providers/index.js';
 
@@ -98,14 +98,21 @@ export function parseEncryptedKeys(content: string): Array<{ vhsmKey: string; en
  * .env → ''
  * .env.local → '_LOCAL'
  * .env.production → '_PRODUCTION'
+ * ./backend/.env → '' (extracts filename first)
+ * ./backend/.env.local → '_LOCAL' (extracts filename first)
  */
 export function getEnvSuffix(envFile: string): string {
-  if (envFile === '.env') {
+  // Extract just the filename from the path (e.g., ./backend/.env → .env)
+  const filename = basename(envFile);
+  
+  if (filename === '.env') {
     return '';
   }
   
-  const parts = envFile.split('.');
+  // Split by '.' to get parts: ['.env', 'local'] or ['.env', 'production']
+  const parts = filename.split('.');
   if (parts.length > 2) {
+    // parts[0] is empty string, parts[1] is 'env', parts[2] is the suffix
     return '_' + parts[parts.length - 1].toUpperCase();
   }
   

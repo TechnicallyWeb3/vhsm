@@ -13,7 +13,7 @@ import {
   readFile,
 } from './utils/test-helpers.js';
 import { join } from 'node:path';
-import { writeFileSync, existsSync, renameSync } from 'node:fs';
+import { writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs';
 
 describe('Multi-File Operations', () => {
   let env: ReturnType<typeof createTestEnvironment>;
@@ -209,6 +209,120 @@ describe('Multi-File Operations', () => {
 
       expect(result.exitCode).to.equal(0);
       expect(result.stdout).to.include('SUCCESS');
+    });
+  });
+
+  describe('Subfolder .env files', () => {
+    it('should correctly handle .env files in subfolders', async () => {
+      // Create backend subdirectory
+      const backendDir = join(env.testDir, 'backend');
+      mkdirSync(backendDir, { recursive: true });
+
+      // Create .env file in backend subdirectory
+      const backendEnvPath = join(backendDir, '.env');
+      writeFileSync(backendEnvPath, 'SECRET_KEY=backend-secret\n');
+
+      // Encrypt with dotenvx in the backend directory
+      runDotenvxCommand(['encrypt'], backendDir);
+
+      // Encrypt with vhsm in the backend directory
+      const encryptResult = await runVhsmCommand(
+        ['encrypt', '-p', 'password', '-pw', 'testpassword123'],
+        { cwd: backendDir }
+      );
+
+      expect(encryptResult.exitCode).to.equal(0);
+      expect(fileExists(backendDir, '.env.keys.encrypted')).to.be.true;
+
+      // Verify encrypted file contains VHSM_PRIVATE_KEY (not VHSM_PRIVATE_KEY_ENV)
+      const encryptedContent = readFile(backendDir, '.env.keys.encrypted');
+      expect(encryptedContent).to.include('VHSM_PRIVATE_KEY=');
+      expect(encryptedContent).to.not.include('VHSM_PRIVATE_KEY_ENV=');
+
+      // Now test running from root with subfolder path
+      const testScript = `
+        if (process.env.SECRET_KEY === 'backend-secret') {
+          console.log('SUCCESS');
+          process.exit(0);
+        } else {
+          console.log('FAILED: SECRET_KEY=' + (process.env.SECRET_KEY || 'undefined'));
+          process.exit(1);
+        }
+      `;
+      const scriptPath = join(env.testDir, 'test-script.js');
+      writeFileSync(scriptPath, testScript);
+
+      // Run from root with -f ./backend/.env and -ef ./backend/.env.keys.encrypted
+      const runResult = await runVhsmCommand(
+        ['run', '-pw', 'testpassword123', '-f', './backend/.env', '-ef', './backend/.env.keys.encrypted', '--', 'node', 'test-script.js'],
+        { cwd: env.testDir }
+      );
+
+      if (runResult.exitCode !== 0) {
+        console.log('STDERR:', runResult.stderr);
+        console.log('STDOUT:', runResult.stdout);
+      }
+
+      // Should not have warning about VHSM_PRIVATE_KEY_ENV
+      expect(runResult.stderr).to.not.include('VHSM_PRIVATE_KEY_ENV');
+      expect(runResult.exitCode).to.equal(0);
+      expect(runResult.stdout).to.include('SUCCESS');
+    });
+
+    it('should correctly handle .env.local files in subfolders', async () => {
+      // Create backend subdirectory
+      const backendDir = join(env.testDir, 'backend');
+      mkdirSync(backendDir, { recursive: true });
+
+      // Create .env.local file in backend subdirectory
+      const backendEnvLocalPath = join(backendDir, '.env.local');
+      writeFileSync(backendEnvLocalPath, 'API_KEY=local-api-key\n');
+
+      // Encrypt with dotenvx in the backend directory
+      runDotenvxCommand(['encrypt', '-f', '.env.local'], backendDir);
+
+      // Encrypt with vhsm in the backend directory
+      const encryptResult = await runVhsmCommand(
+        ['encrypt', '-p', 'password', '-pw', 'testpassword123', '-f', '.env.local'],
+        { cwd: backendDir }
+      );
+
+      expect(encryptResult.exitCode).to.equal(0);
+      expect(fileExists(backendDir, '.env.keys.encrypted')).to.be.true;
+
+      // Verify encrypted file contains VHSM_PRIVATE_KEY_LOCAL (not VHSM_PRIVATE_KEY_LOCAL_ENV)
+      const encryptedContent = readFile(backendDir, '.env.keys.encrypted');
+      expect(encryptedContent).to.include('VHSM_PRIVATE_KEY_LOCAL=');
+      expect(encryptedContent).to.not.include('VHSM_PRIVATE_KEY_LOCAL_ENV=');
+
+      // Now test running from root with subfolder path
+      const testScript = `
+        if (process.env.API_KEY === 'local-api-key') {
+          console.log('SUCCESS');
+          process.exit(0);
+        } else {
+          console.log('FAILED: API_KEY=' + (process.env.API_KEY || 'undefined'));
+          process.exit(1);
+        }
+      `;
+      const scriptPath = join(env.testDir, 'test-script.js');
+      writeFileSync(scriptPath, testScript);
+
+      // Run from root with -f ./backend/.env.local and -ef ./backend/.env.keys.encrypted
+      const runResult = await runVhsmCommand(
+        ['run', '-pw', 'testpassword123', '-f', './backend/.env.local', '-ef', './backend/.env.keys.encrypted', '--', 'node', 'test-script.js'],
+        { cwd: env.testDir }
+      );
+
+      if (runResult.exitCode !== 0) {
+        console.log('STDERR:', runResult.stderr);
+        console.log('STDOUT:', runResult.stdout);
+      }
+
+      // Should not have warning about VHSM_PRIVATE_KEY_LOCAL_ENV
+      expect(runResult.stderr).to.not.include('VHSM_PRIVATE_KEY_LOCAL_ENV');
+      expect(runResult.exitCode).to.equal(0);
+      expect(runResult.stdout).to.include('SUCCESS');
     });
   });
 });
