@@ -238,7 +238,7 @@ describe('Exec Function', () => {
       expect(result.regularValue).to.equal('not-from-env');
     });
 
-    it('should throw error when environment variable is not found', async () => {
+    it('should return undefined with warning when environment variable is not found', async () => {
       // Enable exec via environment variable (admin-controlled)
       process.env.VHSM_ALLOW_EXEC = 'true';
 
@@ -264,24 +264,23 @@ describe('Exec Function', () => {
         },
       ]);
 
-      try {
-        await exec(
-          async ({ missingKey }) => {
-            return missingKey;
-          },
-          {
-            missingKey: '@vhsm NONEXISTENT_KEY',
-          },
-          {
-            encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-            envFile: join(env.testDir, '.env'),
-            password: 'testpassword123',
-          }
-        );
-        expect.fail('Should have thrown an error');
-      } catch (error: any) {
-        expect(error.message).to.include('not found');
-      }
+      // New behavior: returns undefined with warning instead of throwing
+      const result = await exec(
+        async ({ missingKey }) => {
+          return missingKey;
+        },
+        {
+          missingKey: '@vhsm NONEXISTENT_KEY',
+        },
+        {
+          encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
+          envFile: join(env.testDir, '.env'),
+          password: 'testpassword123',
+        }
+      );
+
+      // Missing keys return undefined (lenient behavior for unencrypted/mixed environments)
+      expect(result).to.be.undefined;
     });
 
     it('should support nested exec calls with Promise values', async () => {

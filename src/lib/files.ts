@@ -342,11 +342,15 @@ export async function encryptJsonFile(
 }
 
 /**
- * Decrypt and load a JSON file
+ * Load a JSON file (supports both plain and encrypted formats)
  * 
- * @param jsonFilePath - Path to the encrypted JSON file
- * @param options - Decryption options
- * @returns The decrypted JSON content as an object
+ * Smart detection:
+ * - If file is plain JSON (no encryptedBy field), return it directly
+ * - If file is vHSM encrypted, decrypt and return
+ * 
+ * @param jsonFilePath - Path to the JSON file (plain or encrypted)
+ * @param options - Decryption options (only needed for encrypted files)
+ * @returns The JSON content as an object
  */
 export async function loadFile<T = any>(
   jsonFilePath: string,
@@ -354,7 +358,7 @@ export async function loadFile<T = any>(
 ): Promise<T> {
   // Validate input file exists
   if (!existsSync(jsonFilePath)) {
-    throw new Error(`Encrypted JSON file not found: ${jsonFilePath}`);
+    throw new Error(`JSON file not found: ${jsonFilePath}`);
   }
   
   const config = loadConfig();
@@ -371,22 +375,31 @@ export async function loadFile<T = any>(
     }
   }
   
-  // Read and parse encrypted JSON file
-  let encryptedFile: EncryptedJsonFile;
+  // Read the JSON file
+  let content: string;
+  let parsedContent: any;
   try {
-    const content = readFileSync(jsonFilePath, 'utf-8');
-    encryptedFile = JSON.parse(content);
-    
-    if (!encryptedFile.encryptedBy || encryptedFile.encryptedBy !== 'vhsm') {
-      throw new Error('File is not a vHSM encrypted JSON file');
-    }
-    
-    if (!encryptedFile.encryptedValue || !encryptedFile.encryptedValue.startsWith('encrypted:')) {
-      throw new Error('Invalid encrypted value format');
-    }
+    content = readFileSync(jsonFilePath, 'utf-8');
+    parsedContent = JSON.parse(content);
   } catch (error) {
-    throw new Error(`Failed to read encrypted JSON file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to read JSON file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+  
+  // Check if this is a vHSM encrypted file or plain JSON
+  const isEncrypted = parsedContent.encryptedBy === 'vhsm' && 
+                      parsedContent.encryptedValue?.startsWith('encrypted:');
+  
+  // If plain JSON, return it directly
+  if (!isEncrypted) {
+    // Cache the result
+    if (useCache) {
+      fileCache.set(cacheKey, content, timeout);
+    }
+    return parsedContent as T;
+  }
+  
+  // It's an encrypted file - proceed with decryption
+  const encryptedFile: EncryptedJsonFile = parsedContent;
   
   // Determine which key to use
   const fileName = basename(jsonFilePath, '.encrypted.json');

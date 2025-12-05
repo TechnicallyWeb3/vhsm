@@ -12,11 +12,12 @@ import { loadConfig } from './config.js';
 import { 
   loadEncryptedKeyFile, 
   parseEncryptedKeys, 
-  matchKeysToEnvFiles 
+  matchKeysToEnvFiles,
+  getEnvSuffix
 } from './cli/utils.js';
 import { config as dotenvxConfig, get as dotenvxGet } from '@dotenvx/dotenvx';
 import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, basename } from 'node:path';
 
 // Global session cache instance
 const globalCache = new SessionCache();
@@ -175,6 +176,12 @@ export interface ExecOptions {
 /**
  * Process parameters object, replacing "@vhsm KEY" strings with actual env variable values
  * and "@vhsm FILE.json path.to.value" with JSON file values
+ * 
+ * Simple detection logic:
+ * - If no @vhsm params, just pass through (no processing needed)
+ * - For env vars: Check if already in process.env, if yes use it. If not, try decryption.
+ * - For JSON: Check if plain .json exists, if yes use it. If not, try encrypted version.
+ * - If decryption needed but fails, return undefined with warning
  */
 async function processParams(
   params: Record<string, unknown>,
@@ -183,199 +190,31 @@ async function processParams(
   const processed: Record<string, unknown> = {};
   const sensitiveValues: string[] = [];
   
-  // Check if we're using JSON keys (ending with _JSON) and infer the envFile if not provided
-  let envFile = options.envFile;
-  if (!envFile) {
-    // Look for JSON keys in params
-    for (const value of Object.values(params)) {
-      if (typeof value === 'string' && value.startsWith('@vhsm ')) {
-        const vhsmValue = value.slice(6).trim();
-        const parts = vhsmValue.split(/\s+/);
-        const envKey = parts[0];
-        
-        // If this is a JSON key, infer the .env file path
-        if (envKey.endsWith('_JSON')) {
-          // Convert CONFIG_JSON -> .env.config.json
-          const jsonFileName = envKey.replace(/_JSON$/, '').toLowerCase();
-          envFile = `.env.${jsonFileName}.json`;
-          break;
-        }
+  // Collect @vhsm params that need processing
+  const vhsmEnvParams: Array<{ paramKey: string; envKey: string }> = [];
+  const vhsmJsonParams: Array<{ paramKey: string; jsonKey: string; path?: string }> = [];
+  
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === 'string' && value.startsWith('@vhsm ')) {
+      const vhsmValue = value.slice(6).trim();
+      const parts = vhsmValue.split(/\s+/);
+      const envKey = parts[0];
+      const additionalArg = parts.slice(1).join(' ');
+      
+      if (envKey.endsWith('_JSON')) {
+        vhsmJsonParams.push({ paramKey: key, jsonKey: envKey, path: additionalArg || undefined });
+      } else {
+        vhsmEnvParams.push({ paramKey: key, envKey });
       }
     }
-    
-    // If no JSON keys found, use default .env
-    if (!envFile) {
-      envFile = '.env';
-    }
   }
   
-  // Resolve envFile path relative to encryptedKeysFile directory or current working directory
-  if (envFile && !envFile.startsWith('/') && !envFile.match(/^[A-Z]:/)) {
-    // Relative path - resolve it
-    const encryptedKeysFile = options.encryptedKeysFile || '.env.keys.encrypted';
-    const baseDir = existsSync(encryptedKeysFile) ? dirname(resolve(encryptedKeysFile)) : process.cwd();
-    envFile = resolve(baseDir, envFile);
-  } else if (envFile) {
-    // Already absolute path
-    envFile = resolve(envFile);
-  }
-  
-  // Get decrypted key once for all env variable retrievals
-  const decryptedKey = await getDecryptedKey(
-    options.encryptedKeysFile,
-    envFile,
-    options.provider,
-    options.password,
-    options.enableCache,
-    options.cacheTimeout
-  );
-
-  // Set up environment for dotenvx
-  const originalEnv: Record<string, string | undefined> = {};
-  
-  // Determine which DOTENV_PRIVATE_KEY to use based on env file
-  const envSuffix = envFile && envFile !== '.env'
-    ? envFile.replace(/^\.env\./, '_').toUpperCase().replace(/[^A-Z0-9_]/g, '')
-    : '';
-  
-  const dotenvKeyName = `DOTENV_PRIVATE_KEY${envSuffix}`;
-  
-  try {
-    // Store original value if it exists
-    if (process.env[dotenvKeyName] !== undefined) {
-      originalEnv[dotenvKeyName] = process.env[dotenvKeyName];
-    }
-    
-    // Set the decrypted key in environment
-    process.env[dotenvKeyName] = decryptedKey;
-    
-    // Use the envFile that was already determined (either from options or inferred)
-    
-    // Create a custom processEnv object to load decrypted env variables
-    // Start with a copy of current process.env so dotenvx can find DOTENV_PRIVATE_KEY
-    const processEnv: Record<string, string> = { ...process.env as Record<string, string> };
-    
-    // Ensure the private key is in the processEnv object (dotenvx reads from processEnv when provided)
-    processEnv[dotenvKeyName] = decryptedKey;
-    
-    // Load all env variables from the .env file using dotenvx
-    const configOptions = {
-      path: envFile,
-      processEnv: processEnv,
-      envKeysFile: options.envKeysFile,
-      strict: false,
-      quiet: true,
-    };
-    
-    const configResult = dotenvxConfig(configOptions);
-    if (configResult.error && !configResult.error.message.includes('MISSING_ENV_FILE')) {
-      throw configResult.error;
-    }
-
-    // Process each parameter
+  // If no @vhsm params, just pass through all params directly
+  if (vhsmEnvParams.length === 0 && vhsmJsonParams.length === 0) {
     for (const [key, value] of Object.entries(params)) {
-      if (typeof value === 'string' && value.startsWith('@vhsm ')) {
-        const vhsmValue = value.slice(6).trim(); // Remove '@vhsm ' prefix
-        
-        // Parse the value: "KEY_NAME" or "KEY_NAME path.to.value"
-        const parts = vhsmValue.split(/\s+/);
-        const envKey = parts[0];
-        const additionalArg = parts.slice(1).join(' ');
-        
-        // Check if this is a JSON key (ends with _JSON)
-        if (envKey.endsWith('_JSON')) {
-          // Import loadFile and getJsonValue dynamically
-          const { loadFile, getJsonValue } = await import('./lib/files.js');
-          
-          // Determine the correct .env.[filename].json file for this specific JSON key
-          // CONFIG_JSON -> .env.config.json, SECRETS_JSON -> .env.secrets.json
-          const jsonFileName = envKey.replace(/_JSON$/, '').toLowerCase();
-          const jsonEnvFile = `.env.${jsonFileName}.json`;
-          
-          // Resolve the env file path
-          const encryptedKeysFile = options.encryptedKeysFile || '.env.keys.encrypted';
-          const baseDir = existsSync(encryptedKeysFile) ? dirname(resolve(encryptedKeysFile)) : process.cwd();
-          const resolvedJsonEnvFile = resolve(baseDir, jsonEnvFile);
-          
-          // Get the encrypted JSON file path from the env reference file
-          let jsonFilePath: string;
-          
-          if (existsSync(resolvedJsonEnvFile)) {
-            // Read the .env.[filename].json file to get the encrypted file path
-            const envContent = readFileSync(resolvedJsonEnvFile, 'utf-8');
-            const envLine = envContent.split('\n').find(line => line.trim().startsWith(`${envKey}=`));
-            
-            if (envLine) {
-              const encryptedFileName = envLine.split('=')[1]?.trim();
-              if (encryptedFileName) {
-                // Resolve path relative to the .env file's directory
-                const envFileDir = dirname(resolvedJsonEnvFile);
-                jsonFilePath = join(envFileDir, encryptedFileName);
-                
-                // Validate that the encrypted file exists
-                if (!existsSync(jsonFilePath)) {
-                  throw new Error(
-                    `Encrypted JSON file not found: ${jsonFilePath} (referenced in ${resolvedJsonEnvFile}). ` +
-                    `This may indicate the encrypted file was moved or deleted.`
-                  );
-                }
-              } else {
-                throw new Error(`Invalid format in ${resolvedJsonEnvFile}: expected ${envKey}=<encrypted-file-path>`);
-              }
-            } else {
-              throw new Error(`Key ${envKey} not found in ${resolvedJsonEnvFile}`);
-            }
-          } else {
-            // Fallback: construct path based on key name (for backward compatibility)
-            jsonFilePath = join(baseDir, `${jsonFileName}.encrypted.json`);
-          }
-          
-          if (additionalArg) {
-            // Get specific value using dot notation
-            const jsonValue = await getJsonValue(jsonFilePath, additionalArg, {
-              encryptedKeysFile: options.encryptedKeysFile,
-              provider: options.provider,
-              password: options.password,
-              enableCache: options.enableCache,
-              cacheTimeout: options.cacheTimeout,
-            });
-            processed[key] = jsonValue;
-            
-            // Track sensitive values for cleanup
-            if (typeof jsonValue === 'string') {
-              sensitiveValues.push(jsonValue);
-            }
-          } else {
-            // Load entire JSON file
-            const jsonData = await loadFile(jsonFilePath, {
-              encryptedKeysFile: options.encryptedKeysFile,
-              provider: options.provider,
-              password: options.password,
-              enableCache: options.enableCache,
-              cacheTimeout: options.cacheTimeout,
-            });
-            processed[key] = jsonData;
-          }
-        } else {
-          // Regular environment variable
-          // Get the env variable from the loaded processEnv
-          const envValue = processEnv[envKey];
-          
-          if (envValue === undefined) {
-            throw new Error(`Environment variable '${envKey}' not found in ${envFile || '.env'}`);
-          }
-          
-          processed[key] = envValue;
-          // Track sensitive values for cleanup
-          if (typeof envValue === 'string') {
-            sensitiveValues.push(envValue);
-          }
-        }
-      } else if (value instanceof Promise) {
-        // Support nested exec() calls - resolve Promise values
+      if (value instanceof Promise) {
         const resolvedValue = await value;
         processed[key] = resolvedValue;
-        // If resolved value is a string, track it for cleanup
         if (typeof resolvedValue === 'string') {
           sensitiveValues.push(resolvedValue);
         }
@@ -383,24 +222,221 @@ async function processParams(
         processed[key] = value;
       }
     }
+    (processed as any).__sensitiveValues = sensitiveValues;
+    return processed;
+  }
+  
+  // Determine base directory for resolving paths
+  const encryptedKeysFile = options.encryptedKeysFile || '.env.keys.encrypted';
+  const baseDir = existsSync(encryptedKeysFile) ? dirname(resolve(encryptedKeysFile)) : process.cwd();
+  
+  // Track if we've loaded decrypted env vars (lazy loading)
+  let decryptedEnvLoaded = false;
+  let decryptedProcessEnv: Record<string, string> = {};
+  
+  /**
+   * Lazy load decrypted env vars only when needed
+   */
+  async function ensureDecryptedEnv(envFile: string): Promise<void> {
+    if (decryptedEnvLoaded) return;
     
-    // Clear all loaded env variables from processEnv
-    for (const key of Object.keys(processEnv)) {
-      const value = processEnv[key];
-      if (typeof value === 'string') {
-        clearString(value);
+    // Resolve env file path
+    let resolvedEnvFile = envFile;
+    if (!resolvedEnvFile.startsWith('/') && !resolvedEnvFile.match(/^[A-Z]:/)) {
+      resolvedEnvFile = resolve(baseDir, resolvedEnvFile);
+    }
+    
+    // Try to get decryption key
+    let decryptedKey: string | null = null;
+    try {
+      decryptedKey = await getDecryptedKey(
+        options.encryptedKeysFile,
+        resolvedEnvFile,
+        options.provider,
+        options.password,
+        options.enableCache,
+        options.cacheTimeout
+      );
+    } catch {
+      // Decryption failed - will use process.env values or warn below
+    }
+    
+    // Load env vars using dotenvx
+    decryptedProcessEnv = { ...process.env as Record<string, string> };
+    
+    if (decryptedKey) {
+      const envSuffix = getEnvSuffix(basename(resolvedEnvFile));
+      const dotenvKeyName = `DOTENV_PRIVATE_KEY${envSuffix}`;
+      decryptedProcessEnv[dotenvKeyName] = decryptedKey;
+    }
+    
+    const configResult = dotenvxConfig({
+      path: resolvedEnvFile,
+      processEnv: decryptedProcessEnv,
+      envKeysFile: options.envKeysFile,
+      strict: false,
+      quiet: true,
+    });
+    
+    // Clean up decrypted key
+    if (decryptedKey) {
+      clearString(decryptedKey);
+    }
+    
+    decryptedEnvLoaded = true;
+  }
+  
+  // Process all parameters
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === 'string' && value.startsWith('@vhsm ')) {
+      const vhsmValue = value.slice(6).trim();
+      const parts = vhsmValue.split(/\s+/);
+      const envKey = parts[0];
+      const additionalArg = parts.slice(1).join(' ');
+      
+      if (envKey.endsWith('_JSON')) {
+        // JSON file handling
+        const jsonFileName = envKey.replace(/_JSON$/, '').toLowerCase();
+        
+        // Try plain JSON first, then encrypted
+        const plainPath = join(baseDir, `${jsonFileName}.json`);
+        const encryptedPath = join(baseDir, `${jsonFileName}.encrypted.json`);
+        
+        let jsonFilePath: string | null = null;
+        let usePlainJson = false;
+        
+        if (existsSync(plainPath)) {
+          jsonFilePath = plainPath;
+          usePlainJson = true;
+        } else if (existsSync(encryptedPath)) {
+          jsonFilePath = encryptedPath;
+          usePlainJson = false;
+        } else {
+          // Check for .env.[name].json reference file
+          const envRefFile = join(baseDir, `.env.${jsonFileName}.json`);
+          if (existsSync(envRefFile)) {
+            const envContent = readFileSync(envRefFile, 'utf-8');
+            const envLine = envContent.split('\n').find(line => line.trim().startsWith(`${envKey}=`));
+            if (envLine) {
+              const fileName = envLine.split('=')[1]?.trim();
+              if (fileName) {
+                jsonFilePath = join(dirname(envRefFile), fileName);
+                usePlainJson = !fileName.includes('.encrypted.');
+              }
+            }
+          }
+        }
+        
+        if (!jsonFilePath || !existsSync(jsonFilePath)) {
+          console.warn(`⚠️  JSON file not found for ${envKey}. Setting to undefined.`);
+          processed[key] = undefined;
+          continue;
+        }
+        
+        try {
+          if (usePlainJson) {
+            // Load plain JSON directly
+            const content = readFileSync(jsonFilePath, 'utf-8');
+            const jsonData = JSON.parse(content);
+            
+            if (additionalArg) {
+              // Navigate to nested path
+              const pathParts = additionalArg.split('.');
+              let current: any = jsonData;
+              for (const part of pathParts) {
+                if (current === null || current === undefined || !(part in current)) {
+                  throw new Error(`Path '${additionalArg}' not found`);
+                }
+                current = current[part];
+              }
+              processed[key] = current;
+              if (typeof current === 'string') {
+                sensitiveValues.push(current);
+              }
+            } else {
+              processed[key] = jsonData;
+            }
+          } else {
+            // Use loadFile for encrypted JSON
+            const { loadFile, getJsonValue } = await import('./lib/files.js');
+            
+            if (additionalArg) {
+              const jsonValue = await getJsonValue(jsonFilePath, additionalArg, {
+                encryptedKeysFile: options.encryptedKeysFile,
+                provider: options.provider,
+                password: options.password,
+                enableCache: options.enableCache,
+                cacheTimeout: options.cacheTimeout,
+              });
+              processed[key] = jsonValue;
+              if (typeof jsonValue === 'string') {
+                sensitiveValues.push(jsonValue);
+              }
+            } else {
+              const jsonData = await loadFile(jsonFilePath, {
+                encryptedKeysFile: options.encryptedKeysFile,
+                provider: options.provider,
+                password: options.password,
+                enableCache: options.enableCache,
+                cacheTimeout: options.cacheTimeout,
+              });
+              processed[key] = jsonData;
+            }
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`⚠️  Failed to load JSON for ${envKey}: ${message}. Setting to undefined.`);
+          processed[key] = undefined;
+        }
+      } else {
+        // Regular environment variable
+        // First check if already available in process.env
+        if (process.env[envKey] !== undefined) {
+          processed[key] = process.env[envKey];
+          if (typeof process.env[envKey] === 'string') {
+            sensitiveValues.push(process.env[envKey]!);
+          }
+        } else {
+          // Try to load from .env file (may require decryption)
+          const envFile = options.envFile || '.env';
+          try {
+            await ensureDecryptedEnv(envFile);
+            
+            const envValue = decryptedProcessEnv[envKey];
+            if (envValue !== undefined) {
+              processed[key] = envValue;
+              if (typeof envValue === 'string') {
+                sensitiveValues.push(envValue);
+              }
+            } else {
+              console.warn(`⚠️  Environment variable '${envKey}' not found. Setting to undefined.`);
+              processed[key] = undefined;
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`⚠️  Failed to get '${envKey}': ${message}. Setting to undefined.`);
+            processed[key] = undefined;
+          }
+        }
       }
-      delete processEnv[key];
-    }
-  } finally {
-    // Restore original DOTENV_PRIVATE_KEY if it existed
-    if (originalEnv[dotenvKeyName] !== undefined) {
-      process.env[dotenvKeyName] = originalEnv[dotenvKeyName];
+    } else if (value instanceof Promise) {
+      // Support nested exec() calls - resolve Promise values
+      const resolvedValue = await value;
+      processed[key] = resolvedValue;
+      if (typeof resolvedValue === 'string') {
+        sensitiveValues.push(resolvedValue);
+      }
     } else {
-      delete process.env[dotenvKeyName];
+      processed[key] = value;
     }
-    // Clear decrypted key from memory
-    clearString(decryptedKey);
+  }
+  
+  // Clean up decrypted env vars
+  for (const envKey of Object.keys(decryptedProcessEnv)) {
+    const envValue = decryptedProcessEnv[envKey];
+    if (typeof envValue === 'string') {
+      clearString(envValue);
+    }
   }
 
   // Store sensitive values for cleanup after execution
