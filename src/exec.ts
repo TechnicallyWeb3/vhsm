@@ -164,12 +164,13 @@ export interface ExecOptions {
    */
   envKeysFile?: string;
   
-  /**
-   * Override the global allowExec setting for this execution
-   * If not provided, uses the value from config file or VHSM_ALLOW_EXEC env var
-   */
-  allowExec?: boolean;
 }
+
+// Note: allowExec is intentionally NOT part of ExecOptions.
+// This is a security design decision - exec() can only be enabled by:
+// 1. Environment variable: VHSM_ALLOW_EXEC=true
+// 2. Config file (.vhsmrc.json): {"allowExec": true}
+// Both are admin-controlled, preventing untrusted code from enabling exec.
 
 /**
  * Process parameters object, replacing "@vhsm KEY" strings with actual env variable values
@@ -436,15 +437,18 @@ export async function exec<T extends (...args: any[]) => any>(
   params: Record<string, unknown>,
   options: ExecOptions = {}
 ): Promise<ReturnType<T>> {
-  // Security check: require allowExec to be explicitly enabled
+  // Security check: require allowExec to be explicitly enabled by environment/config
+  // Note: allowExec cannot be set via options - this is a security design decision
+  // to prevent untrusted code from enabling exec programmatically
   const config = loadConfig();
-  const allowExec = options.allowExec ?? config.allowExec ?? false;
+  const allowExec = config.allowExec ?? false;
   
   if (!allowExec) {
     throw new Error(
       'vhsm.exec() is disabled by default for security. ' +
       'To enable, set VHSM_ALLOW_EXEC=true environment variable or ' +
-      'add "allowExec": true to your .vhsmrc.json config file.'
+      'add "allowExec": true to your .vhsmrc.json config file. ' +
+      'Note: exec cannot be enabled programmatically for security reasons.'
     );
   }
   

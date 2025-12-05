@@ -17,13 +17,22 @@ import { join } from 'node:path';
 
 describe('Exec Function', () => {
   let env: ReturnType<typeof createTestEnvironment>;
+  let originalAllowExec: string | undefined;
 
   beforeEach(() => {
     env = createTestEnvironment('exec');
+    // Save original value
+    originalAllowExec = process.env.VHSM_ALLOW_EXEC;
   });
 
   afterEach(() => {
     env.cleanup();
+    // Restore original value
+    if (originalAllowExec !== undefined) {
+      process.env.VHSM_ALLOW_EXEC = originalAllowExec;
+    } else {
+      delete process.env.VHSM_ALLOW_EXEC;
+    }
   });
 
   describe('allowExec blocker', () => {
@@ -52,6 +61,9 @@ describe('Exec Function', () => {
         },
       ]);
 
+      // Ensure VHSM_ALLOW_EXEC is not set
+      delete process.env.VHSM_ALLOW_EXEC;
+
       // Try to use exec without allowExec enabled
       try {
         await exec(
@@ -65,16 +77,18 @@ describe('Exec Function', () => {
             encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
             envFile: join(env.testDir, '.env'),
             password: 'testpassword123',
-            allowExec: false,
           }
         );
         expect.fail('Should have thrown an error');
       } catch (error: any) {
         expect(error.message).to.include('vhsm.exec() is disabled by default for security');
+        expect(error.message).to.include('cannot be enabled programmatically');
       }
     });
 
-    it('should work when allowExec is enabled in options', async () => {
+    it('should reject allowExec option passed programmatically (security)', async () => {
+      // This test verifies that allowExec cannot be bypassed by passing it as an option
+      // This is a critical security feature - exec can only be enabled by admin via env/config
       createEnvFile(env.testDir, {
         API_KEY: 'test-api-key',
       });
@@ -97,22 +111,31 @@ describe('Exec Function', () => {
         },
       ]);
 
-      const result = await exec(
-        async ({ apiKey }) => {
-          return apiKey;
-        },
-        {
-          apiKey: '@vhsm API_KEY',
-        },
-        {
-          encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-          envFile: join(env.testDir, '.env'),
-          password: 'testpassword123',
-          allowExec: true,
-        }
-      );
+      // Ensure VHSM_ALLOW_EXEC is not set
+      delete process.env.VHSM_ALLOW_EXEC;
 
-      expect(result).to.equal('test-api-key');
+      // Even if code tries to pass allowExec: true, it should be ignored
+      try {
+        await exec(
+          async ({ apiKey }) => {
+            return apiKey;
+          },
+          {
+            apiKey: '@vhsm API_KEY',
+          },
+          {
+            encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
+            envFile: join(env.testDir, '.env'),
+            password: 'testpassword123',
+            // @ts-expect-error - allowExec is no longer a valid option, testing that it's ignored
+            allowExec: true,
+          }
+        );
+        expect.fail('Should have thrown an error - allowExec option should be ignored');
+      } catch (error: any) {
+        // Should still fail because allowExec option is ignored for security
+        expect(error.message).to.include('vhsm.exec() is disabled by default for security');
+      }
     });
 
     it('should work when allowExec is enabled via environment variable', async () => {
@@ -138,39 +161,35 @@ describe('Exec Function', () => {
         },
       ]);
 
-      // Set environment variable
-      const originalEnv = process.env.VHSM_ALLOW_EXEC;
+      // Set environment variable - this is the ONLY way to enable exec
       process.env.VHSM_ALLOW_EXEC = 'true';
 
-      try {
-        const result = await exec(
-          async ({ apiKey }) => {
-            return apiKey;
-          },
-          {
-            apiKey: '@vhsm API_KEY',
-          },
-          {
-            encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-            envFile: join(env.testDir, '.env'),
-            password: 'testpassword123',
-          }
-        );
-
-        expect(result).to.equal('test-api-key');
-      } finally {
-        // Restore original environment
-        if (originalEnv !== undefined) {
-          process.env.VHSM_ALLOW_EXEC = originalEnv;
-        } else {
-          delete process.env.VHSM_ALLOW_EXEC;
+      const result = await exec(
+        async ({ apiKey }) => {
+          return apiKey;
+        },
+        {
+          apiKey: '@vhsm API_KEY',
+        },
+        {
+          encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
+          envFile: join(env.testDir, '.env'),
+          password: 'testpassword123',
         }
-      }
+      );
+
+      expect(result).to.equal('test-api-key');
     });
   });
 
   describe('Exec functionality', () => {
+    // All exec functionality tests require VHSM_ALLOW_EXEC=true
+    // This is set via env var in beforeEach for these tests
+    
     it('should inject environment variables with @vhsm prefix', async () => {
+      // Enable exec via environment variable (admin-controlled)
+      process.env.VHSM_ALLOW_EXEC = 'true';
+
       createEnvFile(env.testDir, {
         API_KEY: 'test-api-key',
         SECRET_KEY: 'test-secret-key',
@@ -211,7 +230,6 @@ describe('Exec Function', () => {
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
           envFile: join(env.testDir, '.env'),
           password: 'testpassword123',
-          allowExec: true,
         }
       );
 
@@ -221,6 +239,9 @@ describe('Exec Function', () => {
     });
 
     it('should throw error when environment variable is not found', async () => {
+      // Enable exec via environment variable (admin-controlled)
+      process.env.VHSM_ALLOW_EXEC = 'true';
+
       createEnvFile(env.testDir, {
         API_KEY: 'test-api-key',
       });
@@ -255,7 +276,6 @@ describe('Exec Function', () => {
             encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
             envFile: join(env.testDir, '.env'),
             password: 'testpassword123',
-            allowExec: true,
           }
         );
         expect.fail('Should have thrown an error');
@@ -265,6 +285,9 @@ describe('Exec Function', () => {
     });
 
     it('should support nested exec calls with Promise values', async () => {
+      // Enable exec via environment variable (admin-controlled)
+      process.env.VHSM_ALLOW_EXEC = 'true';
+
       createEnvFile(env.testDir, {
         API_KEY: 'test-api-key',
         SECRET_KEY: 'test-secret-key',
@@ -300,7 +323,6 @@ describe('Exec Function', () => {
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
           envFile: join(env.testDir, '.env'),
           password: 'testpassword123',
-          allowExec: true,
         }
       );
 
@@ -320,7 +342,6 @@ describe('Exec Function', () => {
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
           envFile: join(env.testDir, '.env'),
           password: 'testpassword123',
-          allowExec: true,
         }
       );
 
@@ -329,6 +350,9 @@ describe('Exec Function', () => {
     });
 
     it('should handle errors and clear sensitive data', async () => {
+      // Enable exec via environment variable (admin-controlled)
+      process.env.VHSM_ALLOW_EXEC = 'true';
+
       createEnvFile(env.testDir, {
         API_KEY: 'test-api-key',
       });
@@ -363,7 +387,6 @@ describe('Exec Function', () => {
             encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
             envFile: join(env.testDir, '.env'),
             password: 'testpassword123',
-            allowExec: true,
           }
         );
         expect.fail('Should have thrown an error');

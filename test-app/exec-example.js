@@ -5,9 +5,18 @@
  * 
  * This example shows how to execute functions with automatic decryption and injection
  * of environment variables marked with the "@vhsm " prefix.
+ * 
+ * SECURITY: Before running, you must enable exec via environment variable:
+ *   export VHSM_ALLOW_EXEC=true  (or set in .vhsmrc.json)
+ * 
+ * exec() cannot be enabled programmatically - this is a security feature to prevent
+ * malicious code from bypassing admin restrictions.
  */
 
 import { exec } from '../dist/index.js';
+
+// Enable exec for this example (in production, set this via environment or config file)
+process.env.VHSM_ALLOW_EXEC = 'true';
 
 /**
  * Example signing function that uses an API key
@@ -78,7 +87,6 @@ async function main() {
         encryptedKeysFile: '.env.keys.encrypted',
         envFile: '.env',
         password: 'password',
-        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     
@@ -99,7 +107,6 @@ async function main() {
         encryptedKeysFile: '.env.keys.encrypted',
         envFile: '.env',
         password: 'password',
-        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     
@@ -133,7 +140,6 @@ async function main() {
         encryptedKeysFile: '.env.keys.encrypted',
         envFile: '.env',
         password: 'password',
-        allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
       }
     );
     

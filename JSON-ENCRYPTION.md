@@ -141,9 +141,9 @@ const result = await exec(
   },
   {
     password: 'my-secure-password',
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ### Access Specific JSON Values
@@ -168,9 +168,9 @@ const result = await exec(
   },
   {
     password: 'my-secure-password',
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ### Mix JSON and Environment Variables
@@ -196,9 +196,9 @@ const result = await exec(
   },
   {
     password: 'my-secure-password',
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ## Example JSON File
@@ -384,11 +384,9 @@ const result = await exec(
     dbPort: '@vhsm config.encrypted.json database.port',
     dbUser: '@vhsm config.encrypted.json database.credentials.username',
     dbPass: '@vhsm config.encrypted.json database.credentials.password',
-  },
-  {
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ## Debug Mode

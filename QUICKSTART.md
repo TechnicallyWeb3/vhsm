@@ -244,10 +244,11 @@ const result = await exec(
     encryptedKeysFile: '.env.keys.encrypted',
     envFile: '.env',
     password: 'your-passphrase',
-    allowExec: true  // Required if not set globally
   }
 );
 ```
+
+**⚠️ Security Note:** `exec()` must be enabled via environment variable (`VHSM_ALLOW_EXEC=true`) or config file (`.vhsmrc.json`). It cannot be enabled programmatically for security reasons.
 
 ### Nested Execution Example
 
@@ -256,6 +257,7 @@ import { exec } from 'vhsm';
 import { ethers } from 'ethers';
 
 // Load wallet from mnemonic and sign transaction
+// (Requires VHSM_ALLOW_EXEC=true environment variable)
 const signedTx = await exec(
   async ({ wallet, to, value }) => {
     return wallet.signTransaction({ to, value });
@@ -268,13 +270,11 @@ const signedTx = await exec(
       },
       {
         mnemonic: '@vhsm CRYPTO_WALLET'
-      },
-      { allowExec: true }
+      }
     ),
     to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb5',
     value: ethers.parseEther('0.1')
-  },
-  { allowExec: true }
+  }
 );
 ```
 

@@ -398,20 +398,23 @@ const cached = cache.get(keyId);
 
 #### Secure Function Execution (`vhsm.exec()`)
 
-`vhsm.exec()` allows you to execute functions with automatic decryption and injection of environment variables. **This feature is disabled by default for security** - you must explicitly enable it.
+`vhsm.exec()` allows you to execute functions with automatic decryption and injection of environment variables. **This feature is disabled by default for security** - you must explicitly enable it via admin-controlled settings.
 
-**Enable exec():**
+**Enable exec() (admin-controlled):**
 
 1. Environment variable: `export VHSM_ALLOW_EXEC=true`
 2. Config file: Add `"allowExec": true` to `.vhsmrc.json`
-3. Per-execution: Pass `allowExec: true` in options
+
+**⚠️ Security Note:** `exec()` cannot be enabled programmatically via options. This is by design to prevent malicious code or compromised dependencies from bypassing admin restrictions.
 
 **Basic Example:**
 
 ```typescript
 import { exec } from 'vhsm';
 
-// Enable exec() first (one of the methods above)
+// Enable exec() via environment variable first
+// export VHSM_ALLOW_EXEC=true
+
 const result = await exec(
   async ({ message, apiKey }) => {
     // apiKey is automatically decrypted from @vhsm API_KEY
@@ -424,7 +427,6 @@ const result = await exec(
   {
     encryptedKeysFile: '.env.keys.encrypted',
     envFile: '.env',
-    allowExec: true  // Required if not set globally
   }
 );
 ```
@@ -441,11 +443,9 @@ const result = await exec(
   {
     wallet: await exec(
       loadWallet,
-      { mnemonic: '@vhsm CRYPTO_WALLET' },
-      { allowExec: true }
+      { mnemonic: '@vhsm CRYPTO_WALLET' }
     )
-  },
-  { allowExec: true }
+  }
 );
 ```
 
@@ -533,6 +533,7 @@ const dbPassword = await getJsonValue(
 );
 
 // Use in exec() with @vhsm syntax
+// (Requires VHSM_ALLOW_EXEC=true environment variable)
 const result = await exec(
   async ({ userName, apiKey }) => {
     console.log(`User: ${userName}, Key: ${apiKey}`);
@@ -540,8 +541,7 @@ const result = await exec(
   {
     userName: '@vhsm config.encrypted.json user.name',
     apiKey: '@vhsm config.encrypted.json apiKeys.primary',
-  },
-  { allowExec: true }
+  }
 );
 ```
 

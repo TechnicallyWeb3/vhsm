@@ -15,6 +15,7 @@ import { encryptKeyWithPassword } from '../dist/providers/password.js';
 import { exec } from '../dist/exec.js';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { runVhsmCommand } from './utils/test-helpers.js';
 
 describe('JSON File Encryption', () => {
   let env: ReturnType<typeof createTestEnvironment>;
@@ -458,6 +459,23 @@ describe('JSON File Encryption', () => {
   });
 
   describe('exec() integration with JSON files', () => {
+    let originalAllowExec: string | undefined;
+
+    beforeEach(() => {
+      // Save and set env var for exec tests
+      originalAllowExec = process.env.VHSM_ALLOW_EXEC;
+      process.env.VHSM_ALLOW_EXEC = 'true';
+    });
+
+    afterEach(() => {
+      // Restore original value
+      if (originalAllowExec !== undefined) {
+        process.env.VHSM_ALLOW_EXEC = originalAllowExec;
+      } else {
+        delete process.env.VHSM_ALLOW_EXEC;
+      }
+    });
+
     it('should load entire JSON file using @vhsm syntax', async () => {
       const testData = {
         user: 'Test User',
@@ -484,7 +502,6 @@ describe('JSON File Encryption', () => {
         {
           password: 'test-password-123',
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-          allowExec: true,
           // envFile is automatically inferred as .env.config.json from CONFIG_JSON
         }
       );
@@ -526,7 +543,6 @@ describe('JSON File Encryption', () => {
         {
           password: 'test-password-123',
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-          allowExec: true,
           // envFile is automatically inferred as .env.db.json from DB_JSON
         }
       );
@@ -574,7 +590,6 @@ describe('JSON File Encryption', () => {
         {
           password: 'test-password-123',
           encryptedKeysFile: join(env.testDir, '.env.keys.encrypted'),
-          allowExec: true,
           // envFile is automatically inferred as .env.config.json from CONFIG_JSON (first key)
         }
       );
@@ -583,6 +598,127 @@ describe('JSON File Encryption', () => {
         apiKey: 'key1',
         dbPassword: 'secret123',
       });
+    });
+  });
+
+  describe('CLI decrypt command', () => {
+    it('should decrypt JSON file using CLI command', async () => {
+      const testData = {
+        apiKey: 'secret-api-key-123',
+        database: {
+          host: 'localhost',
+          port: 5432,
+        },
+      };
+      
+      const jsonPath = join(env.testDir, 'config.json');
+      writeFileSync(jsonPath, JSON.stringify(testData, null, 2));
+
+      // Encrypt using CLI
+      const encryptResult = await runVhsmCommand(
+        ['encrypt', 'config.json', '-p', 'password', '-pw', 'test-password-123', '--no-delete'],
+        { cwd: env.testDir }
+      );
+
+      expect(encryptResult.exitCode).to.equal(0);
+      expect(fileExists(env.testDir, 'config.encrypted.json')).to.be.true;
+
+      // Decrypt using CLI
+      const decryptResult = await runVhsmCommand(
+        ['decrypt', 'config.encrypted.json', '-p', 'password', '-pw', 'test-password-123'],
+        { cwd: env.testDir }
+      );
+
+      expect(decryptResult.exitCode).to.equal(0);
+      
+      // Verify decrypted file was created
+      expect(fileExists(env.testDir, 'config.json')).to.be.true;
+      
+      // Verify content matches
+      const decryptedContent = JSON.parse(readFile(env.testDir, 'config.json'));
+      expect(decryptedContent).to.deep.equal(testData);
+    });
+
+    it('should decrypt JSON file with hyphens in filename', async () => {
+      const testData = {
+        user: {
+          name: 'Test User',
+          email: 'test@example.com',
+        },
+      };
+      
+      const jsonPath = join(env.testDir, 'test-config.json');
+      writeFileSync(jsonPath, JSON.stringify(testData, null, 2));
+
+      // Encrypt using CLI
+      await runVhsmCommand(
+        ['encrypt', 'test-config.json', '-p', 'password', '-pw', 'test-password-123', '--no-delete'],
+        { cwd: env.testDir }
+      );
+
+      // Decrypt using CLI
+      const decryptResult = await runVhsmCommand(
+        ['decrypt', 'test-config.encrypted.json', '-p', 'password', '-pw', 'test-password-123'],
+        { cwd: env.testDir }
+      );
+
+      expect(decryptResult.exitCode).to.equal(0);
+      expect(fileExists(env.testDir, 'test-config.json')).to.be.true;
+      
+      const decryptedContent = JSON.parse(readFile(env.testDir, 'test-config.json'));
+      expect(decryptedContent).to.deep.equal(testData);
+    });
+
+    it('should decrypt multiple JSON files', async () => {
+      const configData = { apiKey: 'key123' };
+      const secretsData = { dbPassword: 'secret456' };
+      
+      writeFileSync(join(env.testDir, 'config.json'), JSON.stringify(configData));
+      writeFileSync(join(env.testDir, 'secrets.json'), JSON.stringify(secretsData));
+
+      // Encrypt both files
+      await runVhsmCommand(
+        ['encrypt', 'config.json', 'secrets.json', '-p', 'password', '-pw', 'test-password-123', '--no-delete'],
+        { cwd: env.testDir }
+      );
+
+      // Decrypt both files
+      const decryptResult = await runVhsmCommand(
+        ['decrypt', 'config.encrypted.json', 'secrets.encrypted.json', '-p', 'password', '-pw', 'test-password-123'],
+        { cwd: env.testDir }
+      );
+
+      expect(decryptResult.exitCode).to.equal(0);
+      
+      const configContent = JSON.parse(readFile(env.testDir, 'config.json'));
+      const secretsContent = JSON.parse(readFile(env.testDir, 'secrets.json'));
+      
+      expect(configContent).to.deep.equal(configData);
+      expect(secretsContent).to.deep.equal(secretsData);
+    });
+
+    it('should decrypt to custom output path', async () => {
+      const testData = { value: 'custom-output' };
+      const jsonPath = join(env.testDir, 'input.json');
+      writeFileSync(jsonPath, JSON.stringify(testData));
+
+      // Encrypt
+      await runVhsmCommand(
+        ['encrypt', 'input.json', '-p', 'password', '-pw', 'test-password-123', '--no-delete'],
+        { cwd: env.testDir }
+      );
+
+      // Decrypt to custom output
+      const decryptResult = await runVhsmCommand(
+        ['decrypt', 'input.encrypted.json', '-o', 'output.json', '-p', 'password', '-pw', 'test-password-123'],
+        { cwd: env.testDir }
+      );
+
+      expect(decryptResult.exitCode).to.equal(0);
+      expect(fileExists(env.testDir, 'output.json')).to.be.true;
+      
+      const outputContent = JSON.parse(readFile(env.testDir, 'output.json'));
+      expect(outputContent).to.deep.equal(testData);
     });
   });
 

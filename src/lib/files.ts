@@ -239,9 +239,24 @@ export async function encryptJsonFile(
   }
   
   const keysContent = readFileSync(envKeysPath, 'utf-8');
-  const keyMatch = new RegExp(`${dotenvKeyName}=([^\\n]+)`).exec(keysContent);
+  
+  // Try exact match first
+  let keyMatch = new RegExp(`${dotenvKeyName}=([^\\n]+)`).exec(keysContent);
+  
+  // If not found, dotenvx may use different formatting (e.g., hyphens vs underscores in filename)
+  // Since dotenvx creates one key per file, we can use the first (and only) key found
   if (!keyMatch) {
-    throw new Error(`No ${dotenvKeyName} found in generated keys file`);
+    // Find any DOTENV_PRIVATE_KEY in the file (dotenvx creates one per file)
+    const allKeys = keysContent.match(/DOTENV_PRIVATE_KEY[^=]*=([^\n]+)/g);
+    if (allKeys && allKeys.length > 0) {
+      // Use the first key found
+      keyMatch = /DOTENV_PRIVATE_KEY[^=]*=([^\n]+)/.exec(allKeys[0]);
+    }
+  }
+  
+  if (!keyMatch) {
+    const availableKeys = keysContent.match(/DOTENV_PRIVATE_KEY[^=\n]+/g)?.join(', ') || 'none';
+    throw new Error(`No ${dotenvKeyName} found in generated keys file. Available keys: ${availableKeys}`);
   }
   
   const dotenvPrivateKey = keyMatch[1].trim();
@@ -378,7 +393,12 @@ export async function loadFile<T = any>(
   const fileDir = dirname(jsonFilePath);
   const envKey = jsonFileToEnvKey(join(fileDir, fileName + '.json'));
   const vhsmKey = envKeyToVhsmKey(envKey);
-  const dotenvKeyName = envKeyToDotenvKey(envKey);
+  
+  // Derive dotenvx key name from the actual .env filename (preserves hyphens)
+  // .env.test-decrypt.json -> DOTENV_PRIVATE_KEY_TEST-DECRYPT_JSON
+  const envFileName = `.env.${fileName}.json`;
+  const envFileSuffix = getEnvSuffix(envFileName);
+  const dotenvKeyName = `DOTENV_PRIVATE_KEY${envFileSuffix}`;
   
   // Load the encrypted key for this JSON file
   const encryptedKeysFile = options.encryptedKeysFile || '.env.keys.encrypted';

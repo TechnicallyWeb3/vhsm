@@ -88,9 +88,9 @@ const result = await exec(
   },
   {
     password: 'my-password',
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ## Key Naming Convention

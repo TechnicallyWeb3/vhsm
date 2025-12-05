@@ -30,9 +30,9 @@ const result = await exec(
   {
     encryptedKeysFile: '.env.keys.encrypted',
     envFile: '.env.config.json',  // Had to specify manually
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ### After (Automatic Inference)
@@ -47,10 +47,10 @@ const result = await exec(
   },
   {
     encryptedKeysFile: '.env.keys.encrypted',
-    allowExec: true,
     // envFile is automatically inferred!
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ## Multiple JSON Files
@@ -67,10 +67,10 @@ const result = await exec(
     dbPassword: '@vhsm SECRETS_JSON dbPassword',
   },
   {
-    allowExec: true,
     // Uses .env.config.json (first key with _JSON suffix)
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 **Note**: All JSON values must be encrypted with the same `.env` file's key for this to work correctly. If you need different keys, you'll need to make separate `exec()` calls.
@@ -89,9 +89,9 @@ const result = await exec(
   },
   {
     envFile: './custom/path/.env.config.json',  // Manual override
-    allowExec: true,
   }
 );
+// Note: Requires VHSM_ALLOW_EXEC=true environment variable
 ```
 
 ## Benefits
@@ -129,4 +129,5 @@ The inference happens in the `processParams()` function of `exec()`:
 5. Uses that as the `envFile` for decryption
 
 This happens before any decryption, so the correct key is loaded for all operations.
+
 

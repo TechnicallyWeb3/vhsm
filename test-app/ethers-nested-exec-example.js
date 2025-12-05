@@ -7,16 +7,24 @@
  * 1. Loading a wallet from a mnemonic using exec()
  * 2. Getting the wallet address
  * 3. Signing a transaction where the wallet is loaded via another nested exec() call
+ * 
+ * SECURITY: Before running, you must enable exec via environment variable:
+ *   export VHSM_ALLOW_EXEC=true  (or set in .vhsmrc.json)
+ * 
+ * exec() cannot be enabled programmatically - this is a security feature to prevent
+ * malicious code from bypassing admin restrictions.
  */
 
 import { exec } from '../dist/index.js';
 import { ethers } from 'ethers';
 
+// Enable exec for this example (in production, set this via environment or config file)
+process.env.VHSM_ALLOW_EXEC = 'true';
+
 const execOptions = {
   encryptedKeysFile: '.env.keys.encrypted',
   envFile: '.env',
   password: 'password',
-  allowExec: true  // Required for security - can also use VHSM_ALLOW_EXEC=true env var
 };
 
 /**

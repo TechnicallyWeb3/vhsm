@@ -4,10 +4,11 @@
 
 The `vhsm.exec()` function is a powerful feature that allows you to execute functions with automatic decryption and injection of environment variables. This enables you to securely use encrypted environment variables in your code without exposing them to memory longer than necessary.
 
-**⚠️ Security Note**: `vhsm.exec()` is **disabled by default** for security. You must explicitly enable it via:
+**⚠️ Security Note**: `vhsm.exec()` is **disabled by default** for security. It can ONLY be enabled by admin-controlled settings:
 - Environment variable: `VHSM_ALLOW_EXEC=true`
 - Config file: Add `"allowExec": true` to `.vhsmrc.json`
-- Per-execution: Pass `allowExec: true` in options
+
+**Security Design**: `exec()` cannot be enabled programmatically via options. This prevents malicious code or compromised dependencies from bypassing the admin restriction.
 
 ## Features
 
@@ -102,18 +103,16 @@ interface ExecOptions {
    */
   envKeysFile?: string;
   
-  /**
-   * Override the global allowExec setting for this execution
-   * If not provided, uses the value from config file or VHSM_ALLOW_EXEC env var
-   * Default: false (must be explicitly enabled for security)
-   */
-  allowExec?: boolean;
+  // Note: allowExec is NOT available as an option.
+  // It can only be set via environment variable (VHSM_ALLOW_EXEC=true)
+  // or config file (.vhsmrc.json). This is a security design decision
+  // to prevent code from bypassing admin restrictions.
 }
 ```
 
 ### Security Configuration
 
-`vhsm.exec()` requires explicit opt-in for security. Enable it using one of these methods:
+`vhsm.exec()` requires explicit opt-in for security. Enable it using one of these **admin-controlled** methods:
 
 **1. Environment Variable (recommended for CI/CD)**
 ```bash
@@ -127,15 +126,13 @@ export VHSM_ALLOW_EXEC=true
 }
 ```
 
-**3. Per-Execution Override**
-```typescript
-await exec(myFunction, params, { allowExec: true });
-```
+**⚠️ Security Note**: `exec()` **cannot** be enabled programmatically via options. This is by design to prevent malicious code or compromised dependencies from bypassing admin restrictions.
 
 If `allowExec` is not enabled, `exec()` will throw an error:
 ```
 vhsm.exec() is disabled by default for security. To enable, set VHSM_ALLOW_EXEC=true 
 environment variable or add "allowExec": true to your .vhsmrc.json config file.
+Note: exec cannot be enabled programmatically for security reasons.
 ```
 
 ### Examples
